@@ -1,4 +1,4 @@
-﻿{% extends "base.html" %}
+{% extends "base.html" %}
 {% block content %}
 <div class="page-head">
 
@@ -9,27 +9,6 @@
     <button class="btn" type="submit" style="margin-top:10px;">对比选中（2~4 条）</button>
     <span class="muted" id="cmpCount" style="margin-left:8px;">已选 0 条</span>
   </form>
-  <script>
-document.addEventListener('DOMContentLoaded', function(){
-    const boxes = document.getElementById('cmpBoxes');
-    document.querySelectorAll("table.grid tbody tr").forEach(tr=>{
-      const link = tr.querySelector("a[href*='/backtests/']");
-      if (!link) return;
-      const m = link.getAttribute("href").match(/backtests\/(\d+)/);
-      if (!m) return;
-      const tds = tr.querySelectorAll("td");
-      const label = (tds[0] ? tds[0].textContent.trim() : "") + " bt" + m[1] +
-                    (tds[1] ? " · " + tds[1].textContent.trim() : "");
-      const lab = document.createElement('label');
-      lab.style.cssText = 'display:flex;gap:6px;align-items:center;';
-      lab.innerHTML = `<input type="checkbox" name="ids" value="${m[1]}" style="width:auto"> ${label}`;
-      boxes.appendChild(lab);
-      lab.querySelector('input').addEventListener('change', function(){
-        const n = document.querySelectorAll('#cmpBoxes input:checked').length;
-        document.getElementById('cmpCount').textContent = '已选 ' + n + ' 条' + (n < 2 ? '（至少 2 条）' : '');
-      });
-  });
-  </script>
 </div>
   <div>
     <h1>回测记录</h1>
@@ -66,4 +45,28 @@ document.addEventListener('DOMContentLoaded', function(){
 {% else %}
 <div class="empty">还没有回测记录。<a href="/backtests/new">新建一次</a>。</div>
 {% endif %}
+
+<script>
+(function(){
+  var boxes = document.getElementById('cmpBoxes');
+  if (!boxes) return;
+  document.querySelectorAll("table.grid tbody tr").forEach(function(tr){
+    var link = tr.querySelector("a[href*='/backtests/']");
+    if (!link) return;
+    var m = link.getAttribute("href").match(/backtests\/(\d+)/);
+    if (!m) return;
+    var tds = tr.querySelectorAll("td");
+    var label = (tds[1] ? tds[1].textContent.trim() : "") + " bt" + m[1];
+    var lab = document.createElement('label');
+    lab.style.cssText = 'display:flex;gap:6px;align-items:center;';
+    lab.innerHTML = '<input type="checkbox" name="ids" value="' + m[1] + '" style="width:auto"> ' + label;
+    boxes.appendChild(lab);
+    lab.querySelector('input').addEventListener('change', function(){
+      var n = document.querySelectorAll('#cmpBoxes input:checked').length;
+      var c = document.getElementById('cmpCount');
+      if (c) c.textContent = '已选 ' + n + ' 条' + (n < 2 ? '（至少 2 条）' : '');
+    });
+  });
+})();
+</script>
 {% endblock %}
