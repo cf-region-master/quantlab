@@ -163,3 +163,16 @@
 ### 测试
 70 → **71 项全部通过**（新增 NW 3 项、行业中性 2 项、波动率目标 1 项、
 组合器 7 项中的部分已在第三批计入）。
+
+
+## feature/debug-upgrade-innovation · 第五批（2026-09-27 夜间续）：批评估增强 + 组合报告/增量 IC 导出
+
+1. **批评估增强**：批量重算结果新增前后 RankIC(20d) 对照表（重算是否改善一目了然）。
+2. **对照实验 CSV 导出**：`/experiments/{filename}.csv`（含净值层对照列），
+   文件名白名单防目录穿越；实验历史卡片加导出链接。
+3. **组合增益报告 CSV 导出**：`/api/signals/{id}/combination-report.csv`
+   （combined/component/correlation/gain 分区呈现）+ 详情页导出入口。
+4. **因子增量 IC API**：`/api/factors/incremental-ic?ids=…` —— Schmidt 正交化
+   分解，回答"这个因子在已有因子之外还提供多少新信息"；signals/new 相关性
+   区块联动展示（实测：低波动 +0.0143，动量的信息大部分被前者解释 −0.0165）。
+5. **README 快速开始/§2.5 润色**：组合对照实验 --backtest/--rebalances 用法。
