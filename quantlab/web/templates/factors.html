@@ -41,6 +41,15 @@
   <span class="muted" style="font-size:12.5px;">点表头排序</span>
   <span class="spacer"></span>
   <button class="btn ghost" type="button" id="resetBtn" style="padding:7px 14px;font-size:13px;">重置</button>
+  <button class="btn ghost" type="button" id="decayBtn" style="padding:7px 14px;font-size:13px;">衰减对比（勾选 2~6 个）</button>
+</div>
+
+<div id="decayBox" style="display:none; margin:12px 0;">
+  <div class="chart" style="padding:10px;"><div id="decayCompareChart" style="height:300px;"></div></div>
+  <table class="grid" id="decayTable" style="margin-top:10px;">
+    <thead><tr><th>因子</th><th>半衰期</th><th>最优持有期</th></tr></thead>
+    <tbody></tbody>
+  </table>
 </div>
 
 <form method="post" id="batchForm">
@@ -285,6 +294,39 @@ function showPanel(){
                      : op === 'compose' ? '去新建策略'
                      : op === 'refresh' ? '重算所选因子' : '执行';
   form.action = op === 'delete' ? '/factors/batch-delete' : '/factors/batch-refresh';
+
+// ---- 跨因子衰减对比 ----
+document.getElementById('decayBtn').addEventListener('click', async ()=>{
+  const ids = Array.from(document.querySelectorAll('.rowbox:checked')).map(b=>b.value);
+  if (ids.length < 2 || ids.length > 6) { alert('请勾选 2~6 个因子进行衰减对比'); return; }
+  const box = document.getElementById('decayBox');
+  box.style.display = '';
+  const hint = document.getElementById('decayCompareChart');
+  hint.innerHTML = '<div class="muted" style="padding:20px;">计算中…</div>';
+  const r = await fetch('/api/factors/decay-compare?ids=' + ids.join(','));
+  if (!r.ok) { hint.innerHTML = '<div class="neg" style="padding:20px;">对比失败</div>'; return; }
+  const j = await r.json();
+  const hs = Object.keys(j.curves[j.meta[0].name] && j.curves[j.meta[0].name] || {});
+  const series = j.meta.map(m=>{
+    const curve = j.curves[m.name];
+    return {name: m.name + (m.half_life ? `（半衰期 ${m.half_life}）` : '（未见减半）'),
+            type:'line', symbol:'circle', symbolSize:6,
+            data: hs.map(h=>{ const v = curve[h] && curve[h].rank_ic_mean;
+                              return v==null?null:Math.round(v*10000)/10000; })};
+  });
+  echarts.init(hint).setOption({
+    title:{text:'平均 RankIC 衰减曲线对比', textStyle:{fontSize:13}},
+    tooltip:{trigger:'axis'}, legend:{top:24},
+    xAxis:{type:'category', data:hs, name:'h'},
+    yAxis:{type:'value', scale:true}, series}, true);
+  const tbody = document.querySelector('#decayTable tbody');
+  tbody.innerHTML = '';
+  for (const m of j.meta) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${m.name}</td><td>${m.half_life ?? '—'}</td><td>${m.best_h ?? '—'}</td>`;
+    tbody.appendChild(tr);
+  }
+});
   syncCnt();
 }
 opSel.addEventListener('change', showPanel);

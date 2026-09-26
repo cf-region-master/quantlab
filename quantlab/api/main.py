@@ -1054,7 +1054,8 @@ def api_factors_decay_compare(ids: str = "1,2,3"):
         s = store.get_session()
         try:
             from ..storage.db import Factor
-            name = s.get(Factor, fid).name
+            f = s.get(Factor, fid)
+            name = f.name if f else f"因子{fid}"
         finally:
             s.close()
         curves[name] = rep["curve"]
