@@ -27,7 +27,9 @@
 </div>
 
 {% if gain_report and not gain_report.error %}
-<h2>组合增益（组合 vs 最强单因子）</h2>
+<h2>组合增益（组合 vs 最强单因子）
+  <a class="btn ghost" style="font-size:12px; padding:4px 10px;" href="/api/signals/{{ sig.id }}/combination-report.csv">导出 CSV</a>
+</h2>
 <div class="kv">
   <div class="k">持有期 h</div><div>{{ gain_report.horizon }} 交易日（RankIC 口径）</div>
   <div class="k">组合信号 RankIC</div>

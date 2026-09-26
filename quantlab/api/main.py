@@ -1155,6 +1155,33 @@ def api_signal_best_horizon_route(signal_id: int):
     return store.signal_best_horizon(signal_id)
 
 
+@app.get("/api/signals/{signal_id}/combination-report.csv")
+def api_combination_report_csv(signal_id: int):
+    """组合增益报告导出 CSV（组合/分量/相关性/增益分区呈现）。"""
+    from fastapi.responses import PlainTextResponse
+    rep = store.combination_report(signal_id)
+    nl = chr(10)
+    rows = ["section,key,value"]
+    rows.append(f"combined,rank_ic_mean_h{rep['horizon']},{rep['combined_rank_ic']}")
+    if rep.get("combined_rank_ic_t_nw") is not None:
+        rows.append(f"combined,rank_ic_t_nw_h{rep['horizon']},{rep['combined_rank_ic_t_nw']}")
+    for c in rep["components"]:
+        rows.append(f"component,{c['name']},rank_ic={c['rank_ic']},horizon={c['horizon']}")
+    if rep.get("correlation"):
+        for k in ("min", "max", "mean_abs"):
+            v = rep["correlation"].get(k)
+            if v is not None:
+                rows.append(f"correlation,{k},{v}")
+    g = rep.get("gain") or {}
+    rows.append(f"gain,best_single,{g.get('best_single_key')}={g.get('best_single_ic')}")
+    rows.append(f"gain,gain_vs_best_single,{g.get('gain_vs_best_single')}")
+    rows.append(f"gain,sign_flip,{g.get('sign_flip')}")
+    csv = nl.join(rows) + nl
+    return PlainTextResponse(csv, media_type="text/csv",
+                             headers={"Content-Disposition":
+                                      f'attachment; filename="signal{signal_id}_combination.csv"'})
+
+
 @app.get("/api/signals/{signal_id}/similarity")
 def api_signal_similarity(signal_id: int, vs: str = ""):
     """新信号与既有信号的日收益相关性（防策略重复；|ρ|≥0.9 标记“重复”）。"""
