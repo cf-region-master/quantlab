@@ -1425,6 +1425,17 @@ def _rolling_weighted_panel(sig, market, start=None, end=None) -> pd.DataFrame:
     return panel
 
 
+def signal_latest_weights(sig_id: int) -> dict | None:
+    """最新一期实际权重（策略落地/复盘用）：{factor_id: weight} + 日期。"""
+    w = signal_weight_matrix(sig_id)
+    if w is None or w.empty:
+        return None
+    last = w.ffill().iloc[-1]
+    return {"date": str(w.index[-1].date()),
+            "weights": {str(k): (round(float(v), 6) if np.isfinite(v) else None)
+                        for k, v in last.items()}}
+
+
 def signal_weight_matrix(sig_id: int) -> pd.DataFrame | None:
     """walk-forward 权重类信号的权重矩阵（date × factor）；非该类信号返回 None。"""
     s = get_session()

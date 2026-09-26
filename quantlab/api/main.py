@@ -324,6 +324,10 @@ def page_signal_detail(request: Request, sid: int):
     # 权重随时间变化（walk-forward 权重类信号的可解释性核心）
     weight_matrix = None
     try:
+        latest_weights = store.signal_latest_weights(sid)
+    except Exception:  # noqa: BLE001
+        latest_weights = None
+    try:
         w = store.signal_weight_matrix(sid)
         if w is not None and len(w.index) > 0:
             step = max(1, len(w) // 300)
@@ -336,7 +340,7 @@ def page_signal_detail(request: Request, sid: int):
         weight_matrix = {"error": f"{type(e).__name__}: {e}"}
     return templates.TemplateResponse(request, "signal_detail.html", {
         "sig": sig, "fac_names": fac_names, "diag": diag, "gain_report": gain_report,
-        "weight_matrix": weight_matrix,
+        "weight_matrix": weight_matrix, "latest_weights": latest_weights,
         "backtests": store.list_backtests(signal_id=sid),
         "pools": store.list_pools(),
         "factor_ids": [c["factor_id"] for c in (sig.get("components") or [])],
@@ -1000,6 +1004,36 @@ def page_runs(request: Request):
                 pass
     return templates.TemplateResponse(request, "runs.html",
                                       {"rows": rows, "experiments": experiments})
+
+
+@app.get("/api/signals/{signal_id}/latest-weights")
+def api_signal_latest_weights(signal_id: int):
+    """最新一期实际权重（策略落地/复盘）。"""
+    r = store.signal_latest_weights(signal_id)
+    if r is None:
+        raise HTTPException(404, "该信号不是 walk-forward 权重类模型")
+    return r
+
+
+@app.get("/api/factors/decay-compare")
+def api_factors_decay_compare(ids: str = "1,2,3"):
+    """跨因子 IC 衰减曲线叠加对比（谁的半衰期长、谁的信息更持久）。"""
+    id_list = [int(x) for x in ids.split(",") if x.strip()]
+    if not 2 <= len(id_list) <= 8:
+        raise HTTPException(422, "需 2~8 个因子")
+    curves, meta = {}, []
+    for fid in id_list:
+        rep = store.factor_decay(fid)
+        s = store.get_session()
+        try:
+            from ..storage.db import Factor
+            name = s.get(Factor, fid).name
+        finally:
+            s.close()
+        curves[name] = rep["curve"]
+        meta.append({"id": fid, "name": name, "half_life": rep["half_life"],
+                     "best_h": rep["best_h"]})
+    return {"curves": curves, "meta": meta}
 
 
 @app.get("/api/signals/{signal_id}/weights.csv")

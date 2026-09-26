@@ -69,6 +69,15 @@ fetch('/api/signals/{{ sig.id }}/similarity').then(r=>r.json()).then(j=>{
 <div id="wChart" class="chart" style="height:300px;"></div>
 <div class="muted" style="margin-top:6px;">每列一条堆叠带；权重在日期 t 只使用 t−h 之前的 IC 信息（无前视）。
   <a href="/api/signals/{{ sig.id }}/weights.csv">导出权重 CSV →</a></div>
+{% if latest_weights %}
+<table class="grid" style="margin-top:8px;">
+  <tr><th>最新权重日期</th>{% for k, v in latest_weights.weights.items() %}<th>因子#{{ k }}</th>{% endfor %}</tr>
+  <tr><td>{{ latest_weights.date }}</td>
+      {% for k, v in latest_weights.weights.items() %}
+      <td class="{{ 'pos' if v and v > 0 else 'neg' }}">{{ '%+.4f'|format(v) if v is not none else '—' }}</td>
+      {% endfor %}</tr>
+</table>
+{% endif %}
 <script>
 const WM = {{ weight_matrix|tojson }};
 const wc = echarts.init(document.getElementById('wChart'));
