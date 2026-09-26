@@ -37,18 +37,26 @@
 <div id="cmpChart" class="chart" style="height:360px;"></div>
 
 <script>
+const RAW = {{ raw|tojson }};
 const AL = {{ aligned|tojson }};
 const cmp = echarts.init(document.getElementById('cmpChart'));
+const mkSeries = (name, obj, extra) => {
+  if (!obj || !obj.values) return null;
+  return {name, type:'line', showSymbol:false, ...extra,
+          data:obj.index.map((d,i)=>[d, obj.values[i]==null?null:Math.round(obj.values[i]*10000)/10000])};
+};
+const series = [
+  mkSeries('A (#{{ a.id }}) 净', RAW.a.nav, {}),
+  mkSeries('B (#{{ b.id }}) 净', RAW.b.nav, {}),
+  mkSeries('A 毛', RAW.a.nav_gross, {lineStyle:{type:'dashed'}}),
+  mkSeries('B 毛', RAW.b.nav_gross, {lineStyle:{type:'dashed'}}),
+].filter(Boolean);
 cmp.setOption({
   title:{text:'A/B 净值（共同交易日）', textStyle:{fontSize:13}},
   tooltip:{trigger:'axis'}, legend:{},
   xAxis:{type:'category', data:AL.index},
   yAxis:{type:'value', scale:true},
-  series:[
-    {name:'A (#{{ a.id }})', type:'line', showSymbol:false, data:AL.A},
-    {name:'B (#{{ b.id }})', type:'line', showSymbol:false, data:AL.B}
-  ],
-  dataZoom:[{type:'inside'}]
+  series, dataZoom:[{type:'inside'}]
 });
 </script>
 {% endblock %}

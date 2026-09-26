@@ -387,6 +387,7 @@ def page_backtest_new(request: Request, signal_id: int | None = None):
 @app.get("/backtests/compare", response_class=HTMLResponse)
 def page_backtest_compare(request: Request, a: int, b: int):
     data = store.compare_backtests(a, b)
+    data["raw"] = {"a": store.backtest_result(a) or {}, "b": store.backtest_result(b) or {}}
     sig_names = {s["id"]: s["name"] for s in store.list_signals()}
     data["a"]["signal_name"] = sig_names.get(data["a"].get("signal_id"), "")
     data["b"]["signal_name"] = sig_names.get(data["b"].get("signal_id"), "")
