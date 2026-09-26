@@ -224,6 +224,10 @@
 <div id="icChart" class="chart" style="height:320px;"></div>
 <div class="chart-note">粗线为 20 日滚动均值（主要读数），浅灰细线为日值。样本不足或常数截面当日为空缺（不填 0），折线存在断点。</div>
 
+<h2>IC 衰减与调仓频率</h2>
+<div id="decayChart" class="chart" style="height:260px;"></div>
+<div class="muted" id="decayHint" style="margin-top:6px;">计算中…</div>
+
 <h2>IC 分布与因子值样本</h2>
 <div class="grid2" style="align-items:start;">
   <div><div id="icHist" class="chart" style="height:280px;"></div>
@@ -323,6 +327,21 @@ function drawIC(){
 })();
 
 /* ---------- 因子值样本 ---------- */
+fetch('/api/factors/{{ f.id }}/decay').then(r=>r.json()).then(rep=>{
+  const hs = Object.keys(rep.curve);
+  const vals = hs.map(h=>rep.curve[h].rank_ic_mean);
+  const dc = echarts.init(document.getElementById('decayChart'));
+  dc.setOption({title:{text:'平均 RankIC 随持有期衰减（|IC| 减半处 ≈ 半衰期）', textStyle:{fontSize:13}},
+    tooltip:{trigger:'axis'},
+    xAxis:{type:'category', name:'h', data:hs},
+    yAxis:{type:'value', scale:true},
+    series:[{type:'line', symbol:'circle', symbolSize:7, data:vals.map(v=>v==null?null:Math.round(v*10000)/10000)}]});
+  const unit = rep.frequency==='5m' ? 'bar' : '个交易日';
+  document.getElementById('decayHint').textContent = rep.half_life
+    ? `半衰期 ≈ ${rep.half_life} ${unit} · 最优持有期 h=${rep.best_h} · 调仓频率不宜快于半衰期`
+    : `信息未见减半（最优 h=${rep.best_h}）`;
+}).catch(()=>{ const el=document.getElementById('decayHint'); if(el) el.textContent='衰减计算失败（数据未就绪）'; });
+
 fetch('/api/factors/{{ f.id }}/series').then(r=>{
   if (!r.ok) throw new Error('HTTP '+r.status);
   return r.json();

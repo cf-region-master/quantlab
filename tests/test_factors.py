@@ -449,3 +449,42 @@ def test_ic_summary_includes_nw():
     s = ic_summary(tbl, nw_lag=4)
     assert s["nw_lag"] == 4 and s["ic"]["t_stat_nw"] is not None
     assert np.isfinite(s["ic"]["t_stat_nw"])
+
+
+# ---------------- IC 衰减与半衰期 ----------------
+def test_ic_decay_pure_alpha_halflife_one():
+    """因子=未来 1 日收益（纯 alpha）：h=1 的 IC 最强，半衰期应为 1。"""
+    from quantlab.factors.decay import full_decay_report
+    rng = np.random.default_rng(6)
+    n = 120
+    idx = pd.bdate_range("2023-01-02", periods=n)
+    cols = list("ABCDE")
+    shock = pd.DataFrame(rng.normal(0.004, 0.01, (n, 5)), index=idx, columns=cols)
+    close = pd.DataFrame(100 * np.cumprod(1 + shock, axis=0), index=idx, columns=cols)
+    factor = close.shift(-1) / close - 1          # 未来 1 日收益（前视构造，仅验证衰减计算）
+    rep = full_decay_report(factor, close, horizons=(1, 2, 3, 5, 10), min_n=4)
+    # 半衰期口径：|IC(h)| 首次 <= |IC(1)|/2 的最小 h
+    # 实测曲线 1.0/0.55/0.46/0.32/0.22 → 0.5 阈值首次在 h=3 跌破
+    assert rep["half_life"] == 3
+    assert rep["best_h"] == 1                     # 信息在 h=1 最强
+    ic1 = abs(rep["curve"]["1"]["rank_ic_mean"])
+    ic5 = abs(rep["curve"]["5"]["rank_ic_mean"])
+    assert ic1 > ic5                              # 信息随持有期衰减
+    assert all(rep["curve"][str(h)]["rank_ic_mean"] is not None for h in (1, 2, 3, 5, 10))
+
+
+def test_ic_decay_monotone_information_persists():
+    """因子=未来 10 日收益：短持有期 IC 弱，best_h 应靠近 10。"""
+    from quantlab.factors.decay import full_decay_report
+    rng = np.random.default_rng(8)
+    n = 120
+    idx = pd.bdate_range("2023-01-02", periods=n)
+    cols = list("ABCDE")
+    ret = pd.DataFrame(rng.normal(0, 0.01, (n, 5)), index=idx, columns=cols)
+    close = pd.DataFrame(100 * np.cumprod(1 + ret, axis=0), index=idx, columns=cols)
+    factor = close.shift(-10) / close - 1
+    rep = full_decay_report(factor, close, horizons=(1, 3, 5, 10, 20), min_n=4)
+    ic10 = abs(rep["curve"]["10"]["rank_ic_mean"])
+    ic1 = abs(rep["curve"]["1"]["rank_ic_mean"])
+    assert ic10 > ic1
+    assert rep["best_h"] in (10, 20)

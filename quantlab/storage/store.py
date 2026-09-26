@@ -1142,6 +1142,34 @@ def signal_component_weights(sig: Signal) -> dict[int, float]:
 WEIGHTED_MODELS = ("equal_weight", "ic_weight", "weighted")
 
 
+_decay_cache: dict[tuple, dict] = {}
+
+
+def factor_decay(factor_id: int) -> dict:
+    """IC 衰减曲线与半衰期（按需计算，进程内缓存；调仓频率的量化依据）。
+
+    horizons 取 (1,2,3,5,10,15,20,40) bar/交易日；因子值与标签都按其存储频率口径。
+    """
+    hit = next((v for k, v in _decay_cache.items() if k[0] == factor_id), None)
+    if hit is not None:
+        return hit
+    s = get_session()
+    try:
+        f = s.get(Factor, factor_id)
+        if f is None:
+            raise ValueError(f"因子 {factor_id} 不存在")
+        freq = getattr(f, "frequency", None) or "1d"
+    finally:
+        s.close()
+    values = factor_values(factor_id)
+    close = close_5m() if freq == "5m" else market().close_adj
+    from ..factors.decay import full_decay_report
+    rep = full_decay_report(values, close, min_n=10)
+    rep["frequency"] = freq
+    _decay_cache[(factor_id, freq)] = rep
+    return rep
+
+
 def factor_correlation(factor_ids: list[int]) -> dict:
     """选中因子的池化相关矩阵 + 去冗余建议（组合前的"体检"）。
 

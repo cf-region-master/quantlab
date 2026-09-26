@@ -895,6 +895,12 @@ def api_task_status(task_id: str, log_since: int = 0, curve_max: int = 300):
         s.close()
 
 
+@app.get("/api/factors/{factor_id}/decay")
+def api_factor_decay(factor_id: int):
+    """IC 衰减曲线 + 半衰期（调仓频率的量化依据）。"""
+    return store.factor_decay(factor_id)
+
+
 @app.get("/api/factors/correlation")
 def api_factor_correlation(ids: str = ""):
     """选中因子的相关矩阵 + 去冗余建议（组合前体检，供 signals/new 热力图）。"""
