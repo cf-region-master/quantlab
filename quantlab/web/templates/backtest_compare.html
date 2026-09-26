@@ -8,7 +8,8 @@
   <div>bt{{ r.id }} {{ r.name }}（信号 {{ r.signal_name or r.signal_id }}）· 检查
     {% if r.checks_all_pass %}<span class="pos">PASS</span>{% else %}<span class="neg">—</span>{% endif %}
     {% if r.pool_note %}· 池 {{ r.pool_note[:40] }}{% endif %}
-    · {{ r.top_n }}只/{{ r.weighting }}/{{ r.rebalance_freq }}</div>
+    · {{ r.top_n }}只/{{ r.weighting }}/{{ r.rebalance_freq }}
+    {% if r.initial_cash %}· 初始资金 {{ '{:,.0f}'.format(r.initial_cash) }}{% endif %}</div>
   {% endfor %}
   <div class="k">共同交易日</div><div>{{ n_common_days }}</div>
 </div>
