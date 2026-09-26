@@ -95,6 +95,7 @@ def compare_combinations(factor_ids: list[int], start: str, end: str,
     return {"factor_ids": factor_ids,
             "factor_names": [names.get(i, str(i)) for i in factor_ids],
             "start": start, "end": end, "horizon": horizon,
+            "pool": pool,
             "env": cfg.snapshot().get("data", {}).get("universe", {}).get("name"),
             "models": out,
             "note": ("对照纪律：同因子集/同预处理/同区间/同标签，只改组合模型；"

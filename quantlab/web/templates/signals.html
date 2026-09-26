@@ -17,6 +17,13 @@
 
 {% if signals %}
 <div class="table-wrap" style="margin-top:14px;">
+<div class="card" style="margin:12px 0;">
+  <button class="btn ghost" type="button" id="simBtn">信号相似度矩阵（组合前查重）</button>
+</div>
+<div id="simBox" style="display:none;">
+  <div class="chart" style="padding:10px;"><div id="simMatrixChart" style="height:360px;"></div></div>
+  <div id="simDup" class="muted" style="margin-top:8px;"></div>
+</div>
 <table class="grid">
   <tr><th>ID</th><th>名称</th><th>因子分量</th><th>模型</th><th>有效区间</th>
       <th class="num">RankIC</th><th class="num">ICIR</th><th class="num">回测次数</th><th>创建时间</th></tr>
