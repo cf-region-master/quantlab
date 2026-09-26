@@ -25,11 +25,19 @@
 <h2>历史实验</h2>
 {% for e in experiments %}
 <div class="card" style="margin-bottom:14px;">
-  <div class="k">因子 {{ e.factor_ids }} · h={{ e.horizon }} · {{ e.start }} ~ {{ e.end }}</div>
+  <div class="k">因子 {{ e.factor_ids }} · h={{ e.horizon }} · {{ e.start }} ~ {{ e.end }}
+    {% if e.pool %}· 池 {{ e.pool.indices|join('+') if e.pool.indices is iterable and e.pool.indices is not string else e.pool }}{% endif %}</div>
   <table class="grid" style="margin-top:8px;">
     <tr><th>模型</th><th>RankIC 均值</th><th>t(普通)</th><th>t(NW)</th><th>N</th><th>回测(可选)</th></tr>
+    {% set nw_best = namespace(key=none, val=none) %}
+    {% set nw_best = namespace(key=none, val=none) %}
+    {% for m, v in e.models.items() %}{% set tnw = v.get('t_nw') %}{% set ric = v.get('rank_ic_mean') %}
+      {% if tnw is not none and ric is not none and ric > 0 %}
+        {% if nw_best.val is none or tnw > nw_best.val %}{% set nw_best.key = m %}{% set nw_best.val = tnw %}{% endif %}
+      {% endif %}
+    {% endfor %}
     {% for m, v in e.models.items() %}
-    <tr><td>{{ m }}</td>
+    <tr {% if m == nw_best.key %}style="outline:2px solid #1a7f37;"{% endif %}><td>{{ m }}{% if m == nw_best.key %} <span class="pos">★最优(NW t)</span>{% endif %}</td>
         {% if v.error %}<td colspan="4" class="neg">{{ v.error }}</td>
         {% else %}<td class="{{ 'pos' if v.rank_ic_mean > 0 else 'neg' }}">{{ '%.4f'|format(v.rank_ic_mean) }}</td>
         <td>{{ '%.2f'|format(v.t_naive) }}</td>
