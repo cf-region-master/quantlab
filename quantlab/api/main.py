@@ -1025,9 +1025,15 @@ def experiments_csv(filename: str):
     if not p_.exists():
         raise HTTPException(404)
     data = json.loads(p_.read_text(encoding="utf-8"))
+    rob = data.get("robustness") or {}
     rows = ["model,rank_ic_mean,t_naive,t_nw,n_obs,"
             "bt_annualized_return,bt_sharpe,bt_max_drawdown,"
             "bt_annualized_return_weekly,bt_annualized_return_monthly"]
+    meta = [f"# n_models={rob.get('n_models','')},"
+            f"majority_direction={rob.get('majority_direction','')},"
+            f"direction_consistency={rob.get('direction_consistency','')},"
+            f"n_sig_nw={rob.get('n_sig_nw','')}"]
+    rows.extend(meta)
     for m, v in (data.get("models") or {}).items():
         if "error" in v:
             rows.append(f"{m},ERROR")
