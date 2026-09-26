@@ -1239,6 +1239,58 @@ def factor_correlation(factor_ids: list[int]) -> dict:
             "redundancy": red}
 
 
+def _signal_pnl(sig_dict) -> pd.Series:
+    """信号相似度口径的日收益近似：分值面板截面均值（文档化，见 signal_similarity）。"""
+    s = get_session()
+    try:
+        obj = s.get(Signal, int(sig_dict["id"]))
+    finally:
+        s.close()
+    pnl = signal_panel(obj, market()).mean(axis=1)
+    pnl.attrs = {}   # 清 attrs：walk-forward 面板的 attrs 含 DataFrame，concat 需要比较会炸
+    return pnl
+
+
+def signal_similarity_matrix(min_overlap: int = 30) -> dict:
+    """全部信号两两日收益相关矩阵（组合前查重；|ρ|≥0.9 视为重复敞口）。"""
+    s = get_session()
+    try:
+        all_sigs = [{"id": x.id, "name": x.name}
+                    for x in s.query(Signal).order_by(Signal.id).all()]
+    finally:
+        s.close()
+    pnls = {}
+    names = {}
+    for sd in all_sigs:
+        try:
+            pnls[sd["id"]] = _signal_pnl(sd)
+            names[sd["id"]] = sd["name"]
+        except Exception:  # noqa: BLE001 —— 面板缺失的信号跳过（如分量已删）
+            pass
+    ids = list(pnls)
+    n = len(ids)
+    corr = [[None] * n for _ in range(n)]
+    flags = []
+    for i in range(n):
+        corr[i][i] = 1.0
+        for j in range(i + 1, n):
+            joined = pd.concat([pnls[ids[i]], pnls[ids[j]]], axis=1,
+                               join="inner").dropna()
+            if len(joined) < min_overlap:
+                continue
+            c = float(joined.iloc[:, 0].corr(joined.iloc[:, 1]))
+            if not np.isfinite(c):
+                continue
+            corr[i][j] = corr[j][i] = round(c, 4)
+            if abs(c) >= 0.9 and i != j:
+                flags.append({"a": names[ids[i]], "b": names[ids[j]],
+                              "corr": round(c, 4)})
+    return {"signals": [{"id": i, "name": names[i]} for i in ids],
+            "matrix": corr,
+            "duplicates": flags,
+            "note": "口径：信号分值面板截面均值日收益的重叠区间相关；|ρ|≥0.9 视为重复敞口"}
+
+
 def signal_similarity(signal_id: int, vs: list[int] | None = None) -> dict:
     """新信号与既有信号的日收益相关性 —— 防"策略重复"。
 
@@ -1256,8 +1308,11 @@ def signal_similarity(signal_id: int, vs: list[int] | None = None) -> dict:
         finally:
             s.close()
         panel = signal_panel(obj, market())
-        # 等权持有全部有分值资产的日收益近似（截面均值），仅作相似度口径
-        return panel.mean(axis=1)
+        # 等权持有全部有分值资产的日收益近似（截面均值），仅作相似度口径；
+        # attrs 须清空（walk-forward 面板的 attrs 里带权重 DataFrame，concat 会炸）
+        s_pnl = panel.mean(axis=1)
+        s_pnl.attrs = {}
+        return s_pnl
 
     target = get_signal(signal_id)
     if target is None:
@@ -1434,7 +1489,9 @@ def _rolling_weighted_panel(sig, market, start=None, end=None) -> pd.DataFrame:
     hi = pd.Timestamp(end) if end is not None else pd.Timestamp(sig.end_date)
     # 权重矩阵随面板裁剪后挂到 attrs —— 信号详情页渲染"权重随时间变化"堆叠图
     panel = panel.loc[(panel.index >= lo) & (panel.index <= hi)]
+    panel = panel.copy()
     panel.attrs["weights"] = wmat.reindex(panel.index).ffill()
+    panel.attrs["_weights_is_df"] = True   # 标记：attrs 含 DataFrame
     return panel
 
 

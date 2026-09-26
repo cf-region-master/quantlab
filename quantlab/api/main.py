@@ -1088,6 +1088,12 @@ def api_factor_correlation(ids: str = ""):
     return store.factor_correlation(id_list)
 
 
+@app.get("/api/signals/similarity-matrix")
+def api_signal_similarity_matrix():
+    """全部信号两两相关矩阵（组合前查重）。"""
+    return store.signal_similarity_matrix()
+
+
 @app.get("/api/signals/{signal_id}/similarity")
 def api_signal_similarity(signal_id: int, vs: str = ""):
     """新信号与既有信号的日收益相关性（防策略重复；|ρ|≥0.9 标记“重复”）。"""

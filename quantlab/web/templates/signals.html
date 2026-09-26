@@ -44,4 +44,34 @@
 {% else %}
 <div class="empty">还没有信号。<a href="/signals/new">新建一个</a>：选因子 → 定区间 → 得到信号及其诊断。</div>
 {% endif %}
+
+<script>
+document.getElementById('simBtn').addEventListener('click', async ()=>{
+  const r = await fetch('/api/signals/similarity-matrix');
+  const j = await r.json();
+  document.getElementById('simBox').style.display = '';
+  const names = j.signals.map(s=>s.name.length>12 ? s.name.slice(0,12)+'…' : s.name);
+  const data = [];
+  j.matrix.forEach((row,i)=>row.forEach((v,jj)=>{ if(v!=null && i<jj) data.push([jj,i,v]); }));
+  const chart = echarts.init(document.getElementById('simMatrixChart'));
+  chart.setOption({
+    title:{text:'信号两两日收益相关（|ρ|≥0.9 视为重复敞口）', textStyle:{fontSize:13}, left:'center'},
+    tooltip:{formatter:p=>`${names[p.value[1]]} × ${names[p.value[0]]}: ${p.value[2]}`},
+    grid:{height:'60%', top:'16%'},
+    xAxis:{type:'category', data:names, axisLabel:{rotate:30, fontSize:10}},
+    yAxis:{type:'category', data:names, axisLabel:{fontSize:10}},
+    visualMap:{min:-1, max:1, calculable:true, orient:'horizontal', left:'center', bottom:0,
+               inRange:{color:['#1a5fb4','#fff','#b3261e']}},
+    series:[{type:'heatmap', data, label:{show:j.matrix.length<=8, formatter:p=>p.value[2]}}]
+  }, true);
+  const dup = document.getElementById('simDup');
+  if (j.duplicates.length) {
+    dup.innerHTML = '<b class="neg">⚠ 重复敞口：</b>' + j.duplicates.map(d=>
+      `${d.a} × ${d.b}（ρ=${d.corr}）`).join('；') + ' —— 同因子集的近重复模型只保留其一。';
+  } else {
+    dup.innerHTML = '<span class="pos">未发现重复敞口（|ρ|≥0.9）。</span>';
+  }
+});
+</script>
+
 {% endblock %}
