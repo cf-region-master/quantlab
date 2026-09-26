@@ -1213,6 +1213,12 @@ def api_signal_similarity_matrix():
     return store.signal_similarity_matrix()
 
 
+@app.get("/api/signals/{signal_id}/rolling-ic")
+def api_signal_rolling_ic(signal_id: int, horizon: int = 5):
+    """组合信号的滚动 RankIC 稳定性分析（信号衰减监控）。"""
+    return store.signal_rolling_ic_stability(signal_id, horizon=horizon)
+
+
 @app.get("/api/signals/{signal_id}/best-horizon")
 def api_signal_best_horizon_route(signal_id: int):
     return store.signal_best_horizon(signal_id)

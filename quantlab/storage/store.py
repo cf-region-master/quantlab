@@ -1239,6 +1239,75 @@ def factor_correlation(factor_ids: list[int]) -> dict:
             "redundancy": red}
 
 
+def signal_rolling_ic_stability(signal_id: int, horizon: int = 5,
+                                window: int = 60) -> dict:
+    """组合信号的滚动 RankIC 稳定性分析。
+
+    按 60 日滚动窗口计算 RankIC 序列，然后按季度聚合展示信号衰减趋势。
+    回答：组合信号是"稳定"（IC 持续）还是"衰减"（IC 递减）？
+    """
+    from ..factors.combine import daily_ic_series
+    from ..factors.diagnostics import sig_stars
+
+    s = get_session()
+    try:
+        sig = s.get(Signal, signal_id)
+        if sig is None:
+            raise ValueError(f"信号 {signal_id} 不存在")
+    finally:
+        s.close()
+    panel = signal_panel(sig, market())
+    close = market().close_adj.reindex(index=panel.index)
+    ics = daily_ic_series(panel, close, horizon, min_n=10)
+    ics = ics.dropna()
+    if len(ics) < 30:
+        return {"signal_id": signal_id, "horizon": horizon,
+                "n_obs": len(ics), "note": "样本不足，无法计算滚动 IC"}
+
+    # 按季度聚合滚动 RankIC
+    quarterly = ics.groupby(pd.Grouper(freq="QE")).agg(["mean", "std", "count"])
+    quarterly = quarterly.dropna(how="all")
+    quarters = []
+    for q, row in quarterly.iterrows():
+        quarters.append({
+            "quarter": f"{q.year}Q{(q.month - 1) // 3 + 1}",
+            "rank_ic_mean": round(row["mean"], 6) if np.isfinite(row["mean"]) else None,
+            "n_obs": int(row["count"]),
+        })
+
+    # 全期趋势：线性回归斜率（正=IC 上升，负=衰减）
+    x = np.arange(len(ics))
+    valid = ics.to_numpy()
+    slope = float(np.polyfit(x[np.isfinite(valid)], valid[np.isfinite(valid)], 1)[0])         if np.isfinite(valid).sum() > 10 else 0.0
+
+    first_half = ics.iloc[:len(ics) // 2].mean()
+    second_half = ics.iloc[len(ics) // 2:].mean()
+    trend = "衰减" if second_half < first_half else "稳定/上升"
+
+    return {"signal_id": signal_id, "horizon": horizon,
+            "n_obs": len(ics),
+            "mean_rank_ic": round(float(ics.mean()), 6),
+            "trend": trend,
+            "slope": round(slope, 8),
+            "quarters": quarters,
+            "stars": sig_stars_if(ics.mean(), ics.std(ddof=1) / np.sqrt(len(ics)))}
+
+
+def sig_stars_if(mean, se):
+    """根据均值和标准误返回星号。"""
+    if se is None or se <= 0:
+        return ""
+    t = mean / se
+    a = abs(t)
+    if a >= 2.58:
+        return "***"
+    if a >= 1.96:
+        return "**"
+    if a >= 1.645:
+        return "*"
+    return ""
+
+
 def signal_best_horizon(signal_id: int) -> dict:
     """组合信号的最优持有期建议：对组合面板做多持有期衰减分析。
 
