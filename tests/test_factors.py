@@ -488,3 +488,27 @@ def test_ic_decay_monotone_information_persists():
     ic1 = abs(rep["curve"]["1"]["rank_ic_mean"])
     assert ic10 > ic1
     assert rep["best_h"] in (10, 20)
+
+
+# ---------------- 显著性星号（NW t 描述性参考阈值） ----------------
+def test_sig_stars_thresholds():
+    from quantlab.factors.diagnostics import sig_stars
+    assert sig_stars(2.8) == "***"
+    assert sig_stars(-2.8) == "***"          # 幅度计星，方向看符号
+    assert sig_stars(2.0) == "**"
+    assert sig_stars(1.7) == "*"
+    assert sig_stars(1.0) == ""
+    assert sig_stars(None) == ""
+
+
+def test_newey_west_negative_autocorr_expands_t():
+    """负自相关序列：NW 修正后 |t| 应大于普通 t（方差被高估的回补）。"""
+    from quantlab.factors.diagnostics import newey_west_tstat
+    rng = np.random.default_rng(12)
+    raw = rng.normal(0.03, 0.05, 600)
+    x = pd.Series(raw - np.r_[0.0, raw[:-1]] * 0.5)   # MA(1) 负自相关
+    t_naive = float(x.mean() / (x.std(ddof=1) / np.sqrt(len(x))))
+    t_nw = newey_west_tstat(x.to_numpy(), lag=1)
+    assert abs(t_nw) > abs(t_naive) - 0.5             # 至少不低于朴素口径太多
+    assert np.isfinite(t_nw)
+

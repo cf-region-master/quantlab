@@ -91,6 +91,24 @@ def newey_west_tstat(series: pd.Series, lag: int) -> float:
     return mu / se if se > 0 else float("nan")
 
 
+def sig_stars(t: float | None) -> str:
+    """NW t 的显著性星号（描述性参考阈值，非严格假设检验结论）。
+
+    |t|≥2.58 → ***（约 1%）；≥1.96 → **（约 5%）；≥1.645 → *（约 10%）；
+    其余为空。方向为负时同样计星（星号只表达幅度，方向看符号）。
+    """
+    if t is None:
+        return ""
+    a = abs(t)
+    if a >= 2.58:
+        return "***"
+    if a >= 1.96:
+        return "**"
+    if a >= 1.645:
+        return "*"
+    return ""
+
+
 def ic_summary(table: pd.DataFrame, nw_lag: int | None = None) -> dict[str, Any]:
     """IC 时间序列的均值/标准差/ICIR/t 统计量（描述性）。
 

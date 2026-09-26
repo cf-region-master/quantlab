@@ -1451,17 +1451,21 @@ def combination_report(signal_id: int, horizon: int | None = None) -> dict:
                 pick = cand[0] if cand else min(ms, key=lambda m: abs(m.horizon - h))
             # 分量级 NW t：从存储的逐日 IC 序列重算（重叠标签纪律）
             tnw = None
+            tnw_stars = ""
             if pick and pick.summary_json:
+                from ..factors.diagnostics import newey_west_tstat, sig_stars
                 series = ((pick.summary_json.get(str(pick.horizon), {})
                            or {}).get("ic_series") or {}).get("rank_ic")
                 if series:
-                    from ..factors.diagnostics import newey_west_tstat
                     t = newey_west_tstat(pd.Series(series, dtype="float64"),
                                          lag=max(1, pick.horizon - 1))
-                    tnw = round(t, 3) if np.isfinite(t) else None
+                    if np.isfinite(t):
+                        tnw = round(t, 3)
+                        tnw_stars = sig_stars(tnw)
             singles[fid] = {"factor_id": fid, "name": f.name,
                             "rank_ic": (pick.rank_ic_mean if pick else None),
                             "rank_ic_t_nw": tnw,
+                            "rank_ic_t_nw_stars": tnw_stars,
                             "horizon": (pick.horizon if pick else None)}
             try:
                 panels[fid] = factor_values(fid)
@@ -1506,9 +1510,24 @@ def combination_report(signal_id: int, horizon: int | None = None) -> dict:
         combined_t_nw = newey_west_tstat(pd.Series(series, dtype="float64"),
                                          lag=max(1, h - 1))
         combined_t_nw = None if not np.isfinite(combined_t_nw) else round(combined_t_nw, 3)
+    from ..factors.diagnostics import sig_stars
+    # 显著性聚合：全部持有期的 NW t + 星号（描述性参考阈值）
+    significance = {}
+    for hk, hd in (diag or {}).items():
+        series = ((hd.get("ic_series") or {}).get("rank_ic"))
+        if not series:
+            continue
+        from ..factors.diagnostics import newey_west_tstat
+        t = newey_west_tstat(pd.Series(series, dtype="float64"),
+                             lag=max(1, int(hk) - 1))
+        if np.isfinite(t):
+            significance[hk] = {"t_nw": round(t, 3), "stars": sig_stars(t),
+                                "positive": t > 0}
     return {"signal_id": signal_id, "horizon": h,
             "combined_rank_ic": combined,
             "combined_rank_ic_t_nw": combined_t_nw,
+            "combined_stars": sig_stars(combined_t_nw),
+            "significance": significance,
             "components": list(singles.values()),
             "correlation": corr_summary,
             "gain": gain,

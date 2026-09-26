@@ -36,11 +36,17 @@
   <div>{% for c in gain_report.components %}
     {% set tnw = c.rank_ic_t_nw %}
     {{ c.name }} <b>{{ '%+.4f'|format(c.rank_ic) if c.rank_ic is not none else 'NaN' }}</b>
-    <span class="muted">(t_NW {{ '%.2f'|format(tnw) if tnw is not none else '—' }})</span>{% if not loop.last %} · {% endif %}
+    <span class="muted">(t_NW {{ '%.2f'|format(tnw) if tnw is not none else '—' }}{{ c.rank_ic_t_nw_stars }})</span>{% if not loop.last %} · {% endif %}
   {% endfor %}</div>
+  <div class="k">显著性聚合（各持有期 NW t）</div>
+  <div>{% if gain_report.significance %}
+    {% for hk, sv in gain_report.significance.items() %}
+    <span class="badge {{ 'gp' if sv.positive else '' }}" style="margin-right:6px;">h={{ hk }}：t={{ '%.2f'|format(sv.t_nw) }}{{ sv.stars }}（{{ '正' if sv.positive else '负' }}向）</span>
+    {% endfor %}
+  {% else %}—{% endif %}</div>
   <div class="k">组合信号 RankIC</div>
   <div><b class="{{ 'pos' if gain_report.combined_rank_ic and gain_report.combined_rank_ic > 0 else 'neg' }}">{{ '%.4f'|format(gain_report.combined_rank_ic) if gain_report.combined_rank_ic is not none else 'NaN' }}</b>
-    {% if gain_report.combined_rank_ic_t_nw %}<span class="muted">· NW 修正 t = {{ '%.2f'|format(gain_report.combined_rank_ic_t_nw) }}</span>{% endif %}</div>
+    {% if gain_report.combined_rank_ic_t_nw %}<span class="muted">· NW 修正 t = {{ '%.2f'|format(gain_report.combined_rank_ic_t_nw) }}{{ gain_report.combined_stars }}</span>{% endif %}</div>
   {% for c in gain_report.components %}
   <div class="k">单因子 {{ c.name }}</div>
   <div>RankIC {{ '%.4f'|format(c.rank_ic) if c.rank_ic is not none else 'NaN' }}（h={{ c.horizon }}）</div>
