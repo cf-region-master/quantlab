@@ -67,7 +67,8 @@ fetch('/api/signals/{{ sig.id }}/similarity').then(r=>r.json()).then(j=>{
 {% if weight_matrix and not weight_matrix.error %}
 <h2>因子权重随时间变化（walk-forward）</h2>
 <div id="wChart" class="chart" style="height:300px;"></div>
-<div class="muted" style="margin-top:6px;">每列一条堆叠带；权重在日期 t 只使用 t−h 之前的 IC 信息（无前视）。</div>
+<div class="muted" style="margin-top:6px;">每列一条堆叠带；权重在日期 t 只使用 t−h 之前的 IC 信息（无前视）。
+  <a href="/api/signals/{{ sig.id }}/weights.csv">导出权重 CSV →</a></div>
 <script>
 const WM = {{ weight_matrix|tojson }};
 const wc = echarts.init(document.getElementById('wChart'));

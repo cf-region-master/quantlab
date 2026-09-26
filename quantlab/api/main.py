@@ -1002,6 +1002,22 @@ def page_runs(request: Request):
                                       {"rows": rows, "experiments": experiments})
 
 
+@app.get("/api/signals/{signal_id}/weights.csv")
+def api_signal_weights_csv(signal_id: int):
+    """walk-forward 权重矩阵导出 CSV（date, factor_*, weight；Σ|w|=1，t 日只用 t-h 前信息）。"""
+    from fastapi.responses import PlainTextResponse
+    w = store.signal_weight_matrix(signal_id)
+    if w is None:
+        raise HTTPException(404, "该信号不是 walk-forward 权重类模型")
+    nl = chr(10)
+    csv = "date," + ",".join(str(c) for c in w.columns) + nl
+    for d, row in w.iterrows():
+        csv += str(d.date() if hasattr(d, "date") else d) + "," +             ",".join("" if not np.isfinite(x) else f"{x:.6f}" for x in row.to_numpy()) + nl
+    return PlainTextResponse(csv, media_type="text/csv",
+                             headers={"Content-Disposition":
+                                      f'attachment; filename="signal{signal_id}_weights.csv"'})
+
+
 @app.get("/api/factors/correlation")
 def api_factor_correlation(ids: str = ""):
     """选中因子的相关矩阵 + 去冗余建议（组合前体检，供 signals/new 热力图）。"""

@@ -23,14 +23,21 @@
 <div class="card" style="margin-bottom:14px;">
   <div class="k">因子 {{ e.factor_ids }} · h={{ e.horizon }} · {{ e.start }} ~ {{ e.end }}</div>
   <table class="grid" style="margin-top:8px;">
-    <tr><th>模型</th><th>RankIC 均值</th><th>t(普通)</th><th>t(NW)</th><th>N</th></tr>
+    <tr><th>模型</th><th>RankIC 均值</th><th>t(普通)</th><th>t(NW)</th><th>N</th><th>回测(可选)</th></tr>
     {% for m, v in e.models.items() %}
     <tr><td>{{ m }}</td>
         {% if v.error %}<td colspan="4" class="neg">{{ v.error }}</td>
         {% else %}<td class="{{ 'pos' if v.rank_ic_mean > 0 else 'neg' }}">{{ '%.4f'|format(v.rank_ic_mean) }}</td>
         <td>{{ '%.2f'|format(v.t_naive) }}</td>
         <td>{{ '%.2f'|format(v.t_nw) if v.t_nw is not none else '—' }}</td>
-        <td>{{ v.n_obs }}</td>{% endif %}</tr>
+        <td>{{ v.n_obs }}</td>
+        <td class="muted">
+          {% set ba = v.get('bt_annualized_return') %}
+          {% set bw = v.get('bt_annualized_return_weekly') %}
+          {% set bm = v.get('bt_annualized_return_monthly') %}
+          {% if ba is not none %}年化 {{ '%+.2f%%'|format(ba*100) }} · Sharpe {{ '%.2f'|format(v.get('bt_sharpe')) }}{% endif %}
+          {% if bw is not none and bm is not none %}周 {{ '%+.1f%%'|format(bw*100) }} / 月 {{ '%+.1f%%'|format(bm*100) }}{% endif %}
+        </td>{% endif %}</tr>
     {% endfor %}
   </table>
 </div>
