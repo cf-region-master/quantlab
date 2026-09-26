@@ -7,6 +7,7 @@
   <form method="get" action="/backtests/compare" id="cmpForm" style="margin-top:8px;">
     <div id="cmpBoxes" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:6px;"></div>
     <button class="btn" type="submit" style="margin-top:10px;">对比选中（2~4 条）</button>
+    <span class="muted" id="cmpCount" style="margin-left:8px;">已选 0 条</span>
   </form>
   <script>
 document.addEventListener('DOMContentLoaded', function(){
@@ -23,7 +24,10 @@ document.addEventListener('DOMContentLoaded', function(){
       lab.style.cssText = 'display:flex;gap:6px;align-items:center;';
       lab.innerHTML = `<input type="checkbox" name="ids" value="${m[1]}" style="width:auto"> ${label}`;
       boxes.appendChild(lab);
-    });
+      lab.querySelector('input').addEventListener('change', function(){
+        const n = document.querySelectorAll('#cmpBoxes input:checked').length;
+        document.getElementById('cmpCount').textContent = '已选 ' + n + ' 条' + (n < 2 ? '（至少 2 条）' : '');
+      });
   });
   </script>
 </div>
