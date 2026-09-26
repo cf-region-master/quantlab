@@ -2013,10 +2013,21 @@ def compare_backtests_multi(ids: list[int]) -> dict:
                 diff_rows.append({"section": section, "key": k, "values": vals})
 
     runs_meta = []
+    s = get_session()
+    try:
+        bt_rows = {int(r.id): r for r in s.query(BacktestRun).filter(BacktestRun.id.in_([int(i) for i in ids])).all()}
+    finally:
+        s.close()
     for i, r in enumerate(runs):
-        runs_meta.append({"slot": f"R{i + 1}", "id": ids[i], "name": r.get("name"),
+        rid = int(ids[i])
+        bt = bt_rows.get(rid)
+        runs_meta.append({"slot": f"R{i + 1}", "id": rid, "name": r.get("name"),
                           "signal_id": r.get("signal_id"),
-                          "checks_all_pass": (r.get("checks") or {}).get("all_pass")})
+                          "checks_all_pass": (r.get("checks") or {}).get("all_pass"),
+                          "pool_note": (bt.pool_note if bt else None),
+                          "top_n": (bt.top_n if bt else None),
+                          "weighting": (bt.weighting if bt else None),
+                          "rebalance_freq": (bt.rebalance_freq if bt else None)})
     return {
         "runs": runs_meta,
         "aligned": {"index": [str(d.date()) for d in joined.index],
