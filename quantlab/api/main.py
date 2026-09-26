@@ -396,7 +396,12 @@ def page_lab(request: Request):
                                        "pools": store.list_pools(),
                                        "last": store.last_task_params(),
                                        "data_start": str(mk.dates.min().date()),
-                                       "data_end": str(mk.dates.max().date())})
+                                       "data_end": str(mk.dates.max().date()),
+                                       # 自己划分的默认三段（60%/80% 分割点）：
+                                       # 历史陷阱：三个日期默认值全是数据起点，用户切到
+                                       # 「自己划分」直接提交会 purge 后空段而 FAILED
+                                       "data_split1": str(mk.dates[int(len(mk.dates) * 0.6)].date()),
+                                       "data_split2": str(mk.dates[int(len(mk.dates) * 0.8)].date())})
 
 
 @app.get("/lab/tasks/{task_id}", response_class=HTMLResponse)
@@ -438,13 +443,13 @@ def action_create_signal(request: Request, name: str = Form(...),
     if model_type in ("linear", "tree"):
         params = {"refit_days": int(refit_days), "train_window": int(train_window),
                   "purge": int(purge)}
-    try:
-        r = store.create_signal(name=name, description=description, factor_ids=factor_ids,
-                                model_type=model_type, model_params=params,
-                                start_date=start_date, end_date=end_date)
-    except Exception as e:  # noqa: BLE001 —— 表单错误回显
-        return HTMLResponse(f"<h3>创建失败：{e}</h3><a href='/signals/new'>返回</a>", status_code=400)
-    return RedirectResponse(f"/signals/{r['id']}", status_code=303)
+    payload = dict(name=name, description=description, factor_ids=factor_ids,
+                   model_type=model_type, model_params=params,
+                   start_date=start_date, end_date=end_date)
+    # 异步化：walk-forward 拟合在后台线程执行，HTTP 立即返回进度页（前端不卡）
+    job_id = store.start_simple_job("create_signal", payload,
+                                    lambda: store.create_signal(**payload))
+    return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
 
 @app.post("/backtests/new")
@@ -457,18 +462,16 @@ def action_run_backtest(request: Request, signal_id: int = Form(...),
                         commission_buy: float = Form(...),
                         commission_sell: float = Form(...),
                         slippage: float = Form(0.0)):
-    try:
-        r = store.run_backtest_for_signal(
-            signal_id=signal_id, start_date=start_date, end_date=end_date,
-            pool_id=pool_id or None, top_n=top_n, weighting=weighting,
-            rebalance_freq=rebalance_freq, initial_cash=initial_cash,
-            cost_override={"commission_buy": commission_buy,
-                           "commission_sell": commission_sell, "slippage": slippage})
-    except Exception as e:  # noqa: BLE001 —— 表单错误回显
-        return HTMLResponse(
-            f"<h3>回测失败：{e}</h3><a href='/backtests/new?signal_id={signal_id}'>返回</a>",
-            status_code=400)
-    return RedirectResponse(f"/backtests/{r['id']}", status_code=303)
+    payload = dict(signal_id=signal_id, start_date=start_date, end_date=end_date,
+                   pool_id=pool_id or None, top_n=top_n, weighting=weighting,
+                   rebalance_freq=rebalance_freq, initial_cash=initial_cash,
+                   cost_override={"commission_buy": commission_buy,
+                                  "commission_sell": commission_sell,
+                                  "slippage": slippage})
+    # 异步化：逐日模拟成交移出请求路径，立即返回进度页
+    job_id = store.start_simple_job("backtest", payload,
+                                    lambda: store.run_backtest_for_signal(**payload))
+    return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
 
 @app.post("/factors/new")
@@ -610,6 +613,11 @@ def page_job_done(request: Request, job_id: str):
     if job["status"] not in ("SUCCESS", "FAILED"):
         return RedirectResponse(f"/jobs/{job_id}", status_code=303)
     res = (job.get("result_json") or {})
+    # 信号/回测任务完成 → 直接跳结果实体页
+    if job["kind"] == "create_signal" and job["status"] == "SUCCESS":
+        return RedirectResponse(f"/signals/{res['result']['id']}", status_code=303)
+    if job["kind"] == "backtest" and job["status"] == "SUCCESS":
+        return RedirectResponse(f"/backtests/{res['result']['id']}", status_code=303)
     ctx = {"mode": job["kind"], "res": res, "ids": (job.get("params") or {}).get("ids", []),
            "job": job}
     p = job.get("params") or {}
@@ -838,8 +846,27 @@ def api_factor_series(factor_id: int):
             "ic_series": ic}
 
 
+def _finite(v):
+    """递归把非有限浮点（NaN/Inf）替换为 None —— Starlette JSONResponse 禁 NaN，
+    训练曲线早期轮次常含 NaN（如 entropy），不清洗会让轮询接口 500。"""
+    import math as _math
+    if isinstance(v, float):
+        return v if _math.isfinite(v) else None
+    if isinstance(v, dict):
+        return {k: _finite(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_finite(x) for x in v]
+    return v
+
+
 @app.get("/api/lab/tasks/{task_id}")
-def api_task_status(task_id: str):
+def api_task_status(task_id: str, log_since: int = 0, curve_max: int = 300):
+    """任务状态轮询（增量友好）。
+
+    - log_since=已收到的日志字符数：只回传其后的增量（log_new/log_size），
+      避免训练日志越跑越大时每秒全量传输（前端卡顿来源之一）；
+    - curve_max：曲线最多返回多少点（服务端等步降采样）。
+    """
     s = get_session()
     try:
         t = s.get(AlgoTask, task_id)
@@ -848,8 +875,17 @@ def api_task_status(task_id: str):
         cands = s.query(AlgoCandidate).filter_by(task_id=task_id).count()
         d = t.to_dict()
         d["n_candidates"] = cands
+        full_log = t.log or ""
+        since = max(0, int(log_since or 0))
+        d["log_size"] = len(full_log)
+        d["log_new"] = full_log[since:]
+        d.pop("log", None)          # 不再全量回传
         curve = (t.metrics_json or {}).get("curve", [])
-        d["curve"] = curve
+        step = max(1, len(curve) // max(1, curve_max))
+        d["curve_step"] = step
+        d["curve_total"] = len(curve)
+        d["curve"] = _finite(curve[::step])
+        d["metrics_json"] = _finite(d.get("metrics_json"))
         return d
     finally:
         s.close()

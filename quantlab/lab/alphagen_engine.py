@@ -40,6 +40,7 @@ class AlphaGenParams:
     d_model: int = 32
     n_layers: int = 1
     cell: str = "gru"
+    device: str = "auto"           # auto | cpu | cuda（auto=有 CUDA 用 CUDA）
     seed: int = 0
     ridge: float = 1e-3
     novelty_coef: float = 0.0
@@ -205,13 +206,19 @@ class AlphaGenEngine:
         t0 = time.time()
         seg = self._segments()
         cache = build_daily_cache(self.market, self.cache_dir or CACHE_DIR)
-        dev = torch.device("cpu")          # 无 GPU：显式 CPU，不静默失败
+        # device=auto：本机有 CUDA 即用 GPU（RTX 4060 + torch cu130 实测可用），否则回落 CPU
+        want = str(getattr(self.p, "device", "auto") or "auto")
+        if want == "auto":
+            dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            dev = torch.device(want)
+        self.result.log.append(f"[device] {dev} (cuda_available={torch.cuda.is_available()})")
         m = AgMarket.load(cache, dev, p.label_horizon, False,
                           seg["train"][0], seg["train"][1],
                           seg["valid"][0], seg["valid"][1],
                           seg["test"][0], seg["test"][1])
         self.result.log.append(f"[data] {m.summary()}")
-        self.result.log.append(f"[data] 缓存 {cache}；设备 cpu")
+        self.result.log.append(f"[data] 缓存 {cache}")
         if report:
             report(progress=0.02, stage="data", log_lines=self.result.log[-2:])
 
@@ -293,7 +300,7 @@ class AlphaGenEngine:
                 "test": pool.metrics(test_calc),
                 "data": m.summary(),
                 "segments": self._segment_report(seg),
-                "steps": p.steps, "device": "cpu",
+                "steps": p.steps, "device": str(dev),
                 "elapsed_seconds": round(time.time() - t0, 1),
             }
         except Exception as e:  # noqa: BLE001

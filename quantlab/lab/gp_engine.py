@@ -248,11 +248,24 @@ def segment_split(dates: pd.DatetimeIndex, purge: int = 0,
     if not n:
         raise ValueError("切分区间为空")
 
-    def _pos(d, default: int) -> int:
-        """日期 -> 该日期在日历中的下标（不在日历上则取其后第一个交易日）。"""
+    def _pos(d, default: int, kind: str = "start") -> int:
+        """日期 -> 该日期在日历中的下标。
+
+        kind="start"（开始类边界）：取 >= 日期的第一个交易日（searchsorted left）；
+        kind="end"（结束类边界，train_end/valid_end/test_end）：取 <= 日期的
+        最后一个交易日（searchsorted right - 1）。
+
+        历史 bug：结束类边界也曾用 left —— 用户按自然月末/年末划分时（如
+        train_end=2024-06-30，是周日），被映射到下一个交易日，与 valid_start
+        撞在同一位置，顺序校验误判拒绝，任务直接 FAILED。语义修正后，结束类
+        边界在周末/节假日自然回落到最后一个交易日。
+        """
         if not d:
             return default
         ts = pd.Timestamp(d)
+        if kind == "end":
+            i = int(dates.searchsorted(ts, side="right")) - 1
+            return min(max(i, 0), n - 1)
         i = int(dates.searchsorted(ts, side="left"))
         return min(max(i, 0), n)
 
@@ -268,7 +281,10 @@ def segment_split(dates: pd.DatetimeIndex, purge: int = 0,
 
         def _idx(key):
             v = b.get(key)
-            return _pos(v, -1) if v else None
+            if not v:
+                return None
+            kind = "end" if key.endswith("_end") else "start"
+            return _pos(v, -1, kind=kind)
 
         # 两个切分点（valid 起点 / test 起点）先定；缺的用相邻边界或比例推。
         # 这样用户只填 valid_start + test_start 也成立，只填 train_end 也成立。
@@ -287,7 +303,7 @@ def segment_split(dates: pd.DatetimeIndex, purge: int = 0,
             i_ts2 = (i_ve + 1) if i_ve is not None else d_ts
         i_ve = i_ts2 if i_ve is None else i_ve + 1
 
-        i_0 = _pos(b.get("train_start"), 0)
+        i_0 = _pos(b.get("train_start"), 0, kind="start")
         i_n = _idx("test_end")
         i_n = (n - 1) if i_n is None else i_n          # 闭区间
         if not (0 <= i_0 <= i_te <= i_vs <= i_ve <= i_ts2 <= i_n + 1 <= n):

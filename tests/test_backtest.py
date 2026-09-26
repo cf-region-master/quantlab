@@ -135,3 +135,40 @@ def test_stamp_duty_sell_only_and_gate(tiny_market, bt_cfg):
         sum(t["stamp_duty"] for t in res.trades), rel=1e-9)
     # 有印花税的最终净值 ≤ 无印花税版本
     assert res.nav.iloc[-1] <= gross.nav.iloc[-1] + 1e-12
+
+
+# ---------------- 三段边界语义（Phase：AlphaGen 自定义划分 FAILED 修复） ----------------
+def test_segment_split_end_boundary_on_weekend():
+    """train_end 落在周末/节假日：应回落到 ≤ 该日期的最后一个交易日，而非下一个交易日。
+
+    历史 bug：结束类边界用 searchsorted-left 映射到下一交易日，与 valid_start 撞位，
+    顺序校验误判拒绝 —— 按自然月末/年末划分的合理输入全部 FAILED。
+    """
+    from quantlab.lab.gp_engine import segment_split
+    dates = pd.bdate_range("2023-01-02", periods=601)  # 2023-01-02..2025-04-21
+    seg = segment_split(dates, purge=5, bounds={
+        "train_start": "2023-01-02", "train_end": "2024-06-30",   # 6-30 是周日
+        "valid_start": "2024-07-01", "valid_end": "2024-12-31",
+        "test_start": "2025-01-01"})
+    assert len(seg["train"]) and len(seg["valid"]) and len(seg["test"])
+    assert seg["train"][-1] < seg["valid"][0] < seg["valid"][-1] < seg["test"][0]
+
+
+def test_segment_split_adjacent_trading_day_bounds():
+    """train_end=交易日 X、valid_start=次一交易日：必须成立（连续三段的最自然写法）。"""
+    from quantlab.lab.gp_engine import segment_split
+    dates = pd.bdate_range("2023-01-02", periods=601)
+    seg = segment_split(dates, purge=5, bounds={
+        "train_end": str(dates[358].date()), "valid_start": str(dates[359].date()),
+        "test_start": str(dates[480].date())})
+    # train=[0,359) 再 purge 末 5 天 → 最后一天是 dates[353]；valid 从 dates[359] 起
+    assert seg["train"][-1] == dates[353]
+    assert seg["valid"][0] == dates[359]
+
+
+def test_segment_split_partial_bounds_still_work():
+    from quantlab.lab.gp_engine import segment_split
+    dates = pd.bdate_range("2023-01-02", periods=601)
+    seg = segment_split(dates, purge=5,
+                        bounds={"valid_start": "2024-01-01", "test_start": "2024-10-01"})
+    assert len(seg["train"]) and len(seg["valid"]) and len(seg["test"])

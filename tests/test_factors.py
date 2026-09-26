@@ -403,3 +403,13 @@ def test_alphagen_segments_purge_matches_gp():
 
 
 
+
+
+# ---------------- 池 id 字符串键兼容 ----------------
+def test_norm_pool_id_string_keys():
+    """内置池的字符串键（index_csi300 等）应能解析回数字 id（历史：直接 int() 崩）。"""
+    from quantlab.storage.store import norm_pool_id
+    assert norm_pool_id(None) is None
+    assert norm_pool_id("2") == 2
+    got = norm_pool_id("index_csi300")
+    assert got is not None and int(got) > 0

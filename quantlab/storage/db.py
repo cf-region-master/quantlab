@@ -18,7 +18,25 @@ ROOT = Path(__file__).resolve().parents[2]
 DB_PATH = ROOT / "data" / "quantlab.db"
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-engine = create_engine(f"sqlite:///{DB_PATH}", connect_args={"check_same_thread": False})
+engine = create_engine(f"sqlite:///{DB_PATH}", connect_args={"check_same_thread": False},
+                       pool_pre_ping=True)
+
+
+from sqlalchemy import event as _sa_event  # noqa: E402
+
+
+@_sa_event.listens_for(engine, "connect")
+def _sqlite_pragmas(dbapi_conn, _record):
+    """WAL + busy_timeout：挖掘线程/进程高频写进度时，页面读不再被写锁顶掉。
+
+    历史 bug：默认 journal 模式下训练线程每轮 commit 会拿写锁，
+    同一时刻的页面读请求报 database is locked / 明显变慢（前端"卡"的一部分）。
+    """
+    cur = dbapi_conn.cursor()
+    cur.execute("PRAGMA journal_mode=WAL")
+    cur.execute("PRAGMA busy_timeout=5000")
+    cur.execute("PRAGMA synchronous=NORMAL")
+    cur.close()
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 Base = declarative_base()
 

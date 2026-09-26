@@ -160,13 +160,13 @@
               <tr>
                 <td class="pname"><span class="zh">验证段</span>
                   <span class="code">不参与搜索，仅作对照</span></td>
-                <td><input type="date" name="valid_start" value="{{ data_start }}" min="{{ data_start }}" max="{{ data_end }}"></td>
+                <td><input type="date" name="valid_start" value="{{ data_split1 or data_start }}" min="{{ data_start }}" max="{{ data_end }}"></td>
                 <td><input type="date" name="valid_end" value="{{ data_start }}" min="{{ data_start }}" max="{{ data_end }}"></td>
               </tr>
               <tr>
                 <td class="pname"><span class="zh">测试段</span>
                   <span class="code">完全留出，最终一次性检验</span></td>
-                <td><input type="date" name="test_start" value="{{ data_start }}" min="{{ data_start }}" max="{{ data_end }}"></td>
+                <td><input type="date" name="test_start" value="{{ data_split2 or data_start }}" min="{{ data_start }}" max="{{ data_end }}"></td>
                 <td><input type="date" name="test_end" value="{{ data_end }}" min="{{ data_start }}" max="{{ data_end }}"></td>
               </tr>
             </table>

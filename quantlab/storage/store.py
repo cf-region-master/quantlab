@@ -25,8 +25,7 @@ from .db import (AlgoCandidate, AlgoTask, BacktestRun, BatchJob, Factor, FactorM
 VALUES_DIR = ROOT / "data" / "store" / "factor_values"
 # 回测结果与"策略"解耦：一个信号可对应多个回测 run，文件名 bt{run_id}.json
 RESULTS_DIR = ROOT / "data" / "store" / "backtest_results"
-_tasks_lock = threading.Lock()
-_running_engines: dict[str, Any] = {}
+# （已移除同进程引擎注册表：引擎现于独立子进程执行，取消经 task_runner 文件旗标）
 
 _market: MarketData | None = None
 
@@ -452,6 +451,56 @@ def factor_usage(factor_ids: list[int]) -> list[dict]:
         s.close()
 
 
+# ---------------- 轻量后台任务（信号/回测等秒~十秒级计算出请求路径） ----------------
+def start_simple_job(kind: str, payload: dict, fn) -> str:
+    """把一个同步计算挪到后台线程执行，立即返回 job_id。
+
+    与 BatchJob 共用表与进度页；fn() 的返回值（实体 id 等）存 result_json["result"]，
+    完成页据此跳转到结果实体页。适用秒级计算；分钟级以上的挖掘任务走
+    task_runner 子进程（见 _spawn_runner）。
+    """
+    job_id = str(uuid.uuid4())[:8]
+    s = get_session()
+    try:
+        s.add(BatchJob(id=job_id, kind=kind, status="PENDING", total=1,
+                       params=payload, stage="排队中"))
+        s.commit()
+    finally:
+        s.close()
+
+    def _run():
+        ss = get_session()
+        try:
+            j = ss.get(BatchJob, job_id)
+            j.status, j.stage = "RUNNING", "执行中"
+            ss.commit()
+        finally:
+            ss.close()
+        try:
+            r = fn()
+            ss = get_session()
+            try:
+                j = ss.get(BatchJob, job_id)
+                j.status, j.done = "SUCCESS", 1
+                j.result_json = {"result": r}
+                j.finished_at = now()
+                ss.commit()
+            finally:
+                ss.close()
+        except Exception as e:  # noqa: BLE001 —— 失败信息进任务行，页面展示
+            ss = get_session()
+            try:
+                j = ss.get(BatchJob, job_id)
+                j.status, j.message = "FAILED", f"{type(e).__name__}: {e}"
+                j.finished_at = now()
+                ss.commit()
+            finally:
+                ss.close()
+
+    threading.Thread(target=_run, name=f"job-{job_id}", daemon=True).start()
+    return job_id
+
+
 # ---------------- 批量后台任务 ----------------
 def start_batch_job(kind: str, ids: list[int], **params) -> str:
     """建批量任务并起后台线程，立即返回 job_id（HTTP 请求不等待）。"""
@@ -708,7 +757,24 @@ def norm_pool_id(pool_id) -> int | None:
     """
     if pool_id in (None, 0, "", "0"):
         return None
-    p = get_pool(int(pool_id))
+    try:
+        pid = int(pool_id)
+    except (TypeError, ValueError):
+        # 兼容内置池的字符串键（如 "index_csi300"）：按 DEFAULT_POOLS 的 kind/indices 找回数字 id。
+        # 历史行为：直接 int() 抛 invalid literal，任务 FAILED。
+        key = str(pool_id)
+        probe = key[6:] if key.startswith("index_") else key  # index_csi300 -> csi300
+        s = get_session()
+        try:
+            for p_ in s.query(StockPool).all():
+                d = p_.to_dict()
+                indices = d.get("indices") or []
+                if key == d.get("kind") or probe in indices or key in indices:
+                    return int(p_.id)
+        finally:
+            s.close()
+        raise ValueError(f"未知股票池: {pool_id}")
+    p = get_pool(pid)
     if p is not None and p.get("kind") == "all":
         return None
     return int(pool_id)
@@ -1601,6 +1667,8 @@ ALPHAGEN_PARAMS_SCHEMA = {
     "d_model": {"type": "int", "default": 32, "min": 8, "max": 256, "label": "GRU 隐层维"},
     "n_layers": {"type": "int", "default": 1, "min": 1, "max": 3, "label": "GRU 层数"},
     "seed": {"type": "int", "default": 0, "min": 0, "max": 999999, "label": "随机种子"},
+    "device": {"type": "str", "default": "auto", "label": "计算设备",
+               "choices": ["auto", "cpu", "cuda"]},
     "variant": {"type": "str", "default": "baseline", "label": "变体",
                 "choices": ["baseline", "counterfactual", "novelty", "counterfactual_novelty"]},
     "train_ratio": {"type": "float", "default": 0.6, "min": 0.2, "max": 0.8,
@@ -1665,11 +1733,68 @@ def clean_task_params(params: dict, schema: dict) -> dict:
     return clean
 
 
+def _spawn_runner(task_id: str) -> None:
+    """用独立子解释器执行挖掘任务（python -m quantlab.lab.task_runner）。
+
+    - Web 进程零计算负载（历史为同进程线程，numpy/torch 占 GIL 拖慢全站）；
+    - Windows 下不依赖 multiprocessing spawn 的 __main__ 重导（uvicorn/脚本/笔记本
+      任意宿主上下文都稳健）；
+    - 服务重启不影响已派发的任务：子进程独立完成并把结果写回 SQLite。
+    """
+    import subprocess
+    import sys
+
+    log_dir = ROOT / "data" / "store" / "task_logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    out = open(log_dir / f"{task_id}.out", "ab")
+    kwargs = {}
+    if sys.platform == "win32":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # 不随服务 Ctrl-C 退出
+    subprocess.Popen([sys.executable, "-m", "quantlab.lab.task_runner",
+                      "--task-id", task_id],
+                     cwd=str(ROOT), stdout=out, stderr=subprocess.STDOUT, **kwargs)
+
+
+def validate_split_params(params: dict) -> None:
+    """创建挖掘任务前预检三段边界（在 HTTP 层就给出人话错误，而不是入队后 FAILED）。
+
+    用任务实际的数据范围（区间裁剪后的交易日历）干跑 segment_split；
+    失败时抛 ValueError，路由层转 400。
+    """
+    from ..lab.gp_engine import segment_split
+
+    h = int((params or {}).get("label_horizon") or 5)
+    start = (params or {}).get("start_date")
+    end = (params or {}).get("end_date")
+    dates = market().dates
+    if start:
+        dates = dates[dates >= pd.Timestamp(start)]
+    if end:
+        dates = dates[dates <= pd.Timestamp(end)]
+    # 原始表单参数还没有 split_bounds 键（clean_task_params 才组装）—— 这里按同样的
+    # 规则从六个日期字段现组（历史 bug：读不存在的键导致校验被静默跳过，坏输入照样入队）
+    keys = ("train_start", "train_end", "valid_start", "valid_end", "test_start", "test_end")
+    bounds = {k: str(params[k]) for k in keys if (params or {}).get(k)} or None
+    if bounds and params.get("split_mode") != "ratio":
+        segment_split(dates, purge=h, bounds=bounds)
+    elif bounds:
+        segment_split(dates, purge=h, bounds=bounds)
+    elif not bounds:
+        tr = min(max(float((params or {}).get("train_ratio", 0.6)), 0.1), 0.8)
+        va = min(max(float((params or {}).get("valid_ratio", 0.2)), 0.05), 0.9 - tr)
+        n = len(dates)
+        i1 = max(1, int(round(n * tr)))
+        i2 = min(max(i1 + 1, int(round(n * (tr + va)))), n - 1)
+        if n - i2 < 1 or i1 < 1:
+            raise ValueError(f"数据范围只有 {n} 个交易日，比例切分后至少一段为空；请扩大区间")
+
+
 def create_alphagen_task(params: dict) -> str:
     """创建 AlphaGen（日频 CPU）挖掘任务，后台线程执行。
 
     成功后自动：因子池以**隐藏**因子入库 + 落成一个带学习权重的策略（见 _run_alphagen_task）。
     """
+    validate_split_params(params)
     task_id = str(uuid.uuid4())[:8]
     clean = clean_task_params(params, ALPHAGEN_PARAMS_SCHEMA)
     s = get_session()
@@ -1679,150 +1804,10 @@ def create_alphagen_task(params: dict) -> str:
         s.commit()
     finally:
         s.close()
-    threading.Thread(target=_run_alphagen_task, args=(task_id,), daemon=True).start()
+    # 进程隔离：引擎在独立子进程执行（历史为同进程线程，numpy/torch 占 GIL 拖慢全站）
+    _spawn_runner(task_id)
     return task_id
 
-
-def _run_alphagen_task(task_id: str) -> None:
-    from ..lab.alphagen_engine import CACHE_DIR, AlphaGenEngine, AlphaGenParams
-    s = get_session()
-    try:
-        t = s.get(AlgoTask, task_id)
-        t.status, t.stage, t.progress = "RUNNING", "init", 0.0
-        t.log = (t.log or "") + f"[start] engine=alphagen_daily_cpu params={t.params}\n"
-        s.commit()
-        # params 里除算法参数外还带 "spec"（因子计算参数）与计算范围（pool_id/起止日期），
-        # 都不能整体喂给 dataclass
-        spec = task_spec(t.params)
-        params = AlphaGenParams(**_dc_kwargs(t.params, AlphaGenParams))
-        # 因子值按任务选定的复权口径 + 计算区间计算；股票池以逐日掩码置 NaN 注入视图，
-        # 因为 PIT 指数成分逐日变化，静态裁代码集等于放松池子。
-        mk = market()
-        pool_id = norm_pool_id(t.params.get("pool_id"))
-        pool_mask, pool_note = pool_mask_for(pool_id, mk)
-        scope = mk.scoped_view(spec["adjust"], t.params.get("start_date"),
-                               t.params.get("end_date"), pool_mask=pool_mask)
-        cdir = CACHE_DIR / scope.cache_key()
-        eng = AlphaGenEngine(scope, params, cache_dir=cdir)
-        t.log = (t.log or "") + f"[scope] {pool_note}；区间 {scope.dates.min().date()} ~ " \
-                                f"{scope.dates.max().date()}；缓存 {cdir.name}\n"
-        s.commit()
-        with _tasks_lock:
-            _running_engines[task_id] = eng
-
-        def report(progress=0.0, stage="", metrics=None, log_lines=()):
-            ss = get_session()
-            try:
-                tt = ss.get(AlgoTask, task_id)
-                tt.progress, tt.stage = float(progress), stage
-                if metrics:
-                    tt.metrics_json = {**(tt.metrics_json or {}), **metrics}
-                if log_lines:
-                    tt.log = (tt.log or "") + "\n".join(log_lines) + "\n"
-                ss.commit()
-            finally:
-                ss.close()
-
-        try:
-            res = eng.run(report=report)
-            spec = task_spec(t.params)
-
-            # ---- 1) 候选先落库（后续采纳需要它们已有 id）----
-            ss = get_session()
-            try:
-                tt = ss.get(AlgoTask, task_id)
-                if tt.status == "CANCELLED":
-                    tt.finished_at = now()
-                else:
-                    tt.status, tt.progress, tt.stage = "SUCCESS", 1.0, "done"
-                    # segments 放到 metrics_json 顶层：GP 也在顶层，页面按同一形状读
-                    tt.metrics_json = {**(tt.metrics_json or {}),
-                                       "curve": res.curve, "summary": res.summary,
-                                       "segments": (res.summary or {}).get("segments")}
-                    tt.finished_at = now()
-                tt.log = (tt.log or "") + "\n".join(res.log) + "\n"
-                for c in res.candidates:
-                    ss.add(AlgoCandidate(task_id=task_id, expression=c["expression"],
-                                         expr_json={"code": c["code"]},
-                                         train_ic=c.get("train_ic"), valid_ic=c.get("valid_ic"),
-                                         test_ic=c.get("test_ic"), size=c.get("size")))
-                ss.commit()
-            finally:
-                ss.close()
-
-            # ---- 2) AlphaGen 的因子池 = 一个因子组合：因子隐藏入库 + 直接落成策略 ----
-            #   权重用算法学到的线性权重（AlphaPool.weights），不是等权。
-            adopted, strategy = [], None
-            try:
-                ss = get_session()
-                try:
-                    rows = (ss.query(AlgoCandidate).filter_by(task_id=task_id)
-                            .order_by(AlgoCandidate.id).all())
-                finally:
-                    ss.close()
-                # 插入顺序与 res.candidates 一一对应，据此对齐 pool_weight
-                weights = {}
-                for c, rc in zip(rows, res.candidates):
-                    w = rc.get("pool_weight")
-                    if w is not None:
-                        weights[int(c.id)] = float(w)
-                adopted = adopt_candidates(task_id, [int(c.id) for c in rows],
-                                           hidden=True, spec=spec,
-                                           pool_id=t.params.get("pool_id"),
-                                           start=t.params.get("start_date"),
-                                           end=t.params.get("end_date"))
-                cid2fid = {a["candidate_id"]: a["factor_id"] for a in adopted}
-                fw = {cid2fid[cid]: w for cid, w in weights.items() if cid in cid2fid}
-                strategy = auto_strategy_from_task(task_id, fw)
-                ss = get_session()
-                try:
-                    tt = ss.get(AlgoTask, task_id)
-                    tt.log = (tt.log or "") + (
-                        f"[auto] rows={len(rows)} res_cands={len(res.candidates)} "
-                        f"adopted={len(adopted)} weights={len(weights)} strategy={strategy}\n")
-                    ss.commit()
-                finally:
-                    ss.close()
-            except Exception as e:  # noqa: BLE001 —— 自动落库失败不影响任务本身成功
-                strategy = {"error": f"{type(e).__name__}: {e}"}
-                import traceback
-                ss = get_session()
-                try:
-                    tt = ss.get(AlgoTask, task_id)
-                    tt.log = (tt.log or "") + (
-                        f"[auto][FAIL] {type(e).__name__}: {e}\n"
-                        + traceback.format_exc()[-1200:] + "\n")
-                    ss.commit()
-                finally:
-                    ss.close()
-
-            # ---- 3) 把自动结果记到任务上（页面据此显示"已生成策略"）----
-            if adopted or strategy:
-                ss = get_session()
-                try:
-                    tt = ss.get(AlgoTask, task_id)
-                    tt.metrics_json = {**(tt.metrics_json or {}),
-                                       "auto_strategy": strategy,
-                                       "hidden_factor_ids": [a.get("factor_id") for a in adopted]}
-                    tt.log = (tt.log or "") + (
-                        f"[auto] 因子池入库（隐藏）{len(adopted)} 条 · "
-                        f"策略 {strategy}\n")
-                    ss.commit()
-                finally:
-                    ss.close()
-        except Exception as e:  # noqa: BLE001
-            ss = get_session()
-            try:
-                tt = ss.get(AlgoTask, task_id)
-                tt.status, tt.message = "FAILED", f"{type(e).__name__}: {e}"
-                ss.commit()
-            finally:
-                ss.close()
-        finally:
-            with _tasks_lock:
-                _running_engines.pop(task_id, None)
-    finally:
-        s.close()
 
 
 def create_task(engine_id: str, params: dict) -> str:
@@ -1861,20 +1846,21 @@ def engines() -> list[dict]:
     }, {
         "engine_id": "alphagen_daily_cpu", "display_name": "AlphaGen-RL（日频 · CPU）",
         "algorithm": "MaskablePPO + GRU 逐 token 生成表达式树，线性因子池，奖励=池 ensemble IC",
-        "objective": "factor_mining", "resource": "cpu（16 核实测：256 步 0.6s）",
+        "objective": "factor_mining", "resource": "cpu/gpu（device 参数）",
         "param_schema": ALPHAGEN_PARAMS_SCHEMA, "status": "ready",
         "discipline": "train/valid/test 三段隔离；候选转译为沙箱 Python 源码后入库",
         "note": "源自 alphagen_5m 引擎，仅把数据层从 5 分钟 48bar/日 改为日频 1bar/日",
     }, {
-        "engine_id": "alphagen_gpu", "display_name": "AlphaGen-RL（日频 · GPU）",
-        "algorithm": "同 CPU 版，大模型/长训练规模需要 GPU",
-        "objective": "factor_mining", "resource": "gpu（本机无 CUDA）",
-        "param_schema": {}, "status": "unavailable_no_gpu",
-        "note": "本机 torch.cuda.is_available()=False；CPU 版已可用，此条目仅记录差异",
+        "engine_id": "alphagen_daily_cpu", "display_name": "AlphaGen-RL（日频 · CUDA 可选）",
+        "algorithm": "同 CPU 路径；device=auto 时本机有 CUDA 即用 GPU（RTX 4060 + torch cu130 已实测）",
+        "objective": "factor_mining", "resource": "gpu 可选（device 参数）",
+        "param_schema": {}, "status": "ready",
+        "note": "在实验室表单选 device=cuda 或 auto 即启用 GPU；无 CUDA 自动回落 CPU",
     }]
 
 
 def create_gp_task(params: dict) -> str:
+    validate_split_params(params)
     task_id = str(uuid.uuid4())[:8]
     clean_params = clean_task_params(params, GP_PARAMS_SCHEMA)
     s = get_session()
@@ -1885,89 +1871,15 @@ def create_gp_task(params: dict) -> str:
         s.commit()
     finally:
         s.close()
-    th = threading.Thread(target=_run_gp_task, args=(task_id,), daemon=True)
-    th.start()
+    _spawn_runner(task_id)
     return task_id
 
 
-def _run_gp_task(task_id: str) -> None:
-    from ..lab.gp_engine import GpEngine, GpParams
-    s = get_session()
-    try:
-        t = s.get(AlgoTask, task_id)
-        t.status, t.stage, t.progress = "RUNNING", "init", 0.0
-        t.log = (t.log or "") + f"[start] engine=gp_daily params={t.params}\n"
-        s.commit()
-        # 同上：剔除 spec 与计算范围后再构造 dataclass。
-        # GP 与 AlphaGen 用**同一个** scoped_view，所以池与区间对两个引擎含义一致。
-        _spec = task_spec(t.params)
-        params = GpParams(**_dc_kwargs(t.params, GpParams))
-        _mk = market()
-        _pm, _note = pool_mask_for(norm_pool_id(t.params.get("pool_id")), _mk)
-        _scope = _mk.scoped_view(_spec["adjust"], t.params.get("start_date"),
-                                 t.params.get("end_date"), pool_mask=_pm)
-        eng = GpEngine(_scope, params)
-        t.log = (t.log or "") + f"[scope] {_note}；区间 {_scope.dates.min().date()} ~ " \
-                                f"{_scope.dates.max().date()}\n"
-        s.commit()
-        with _tasks_lock:
-            _running_engines[task_id] = eng
-
-        def report(progress=0.0, stage="", metrics=None, log_lines=()):
-            ss = get_session()
-            try:
-                tt = ss.get(AlgoTask, task_id)
-                tt.progress, tt.stage = float(progress), stage
-                if metrics:
-                    tt.metrics_json = {**(tt.metrics_json or {}), **metrics}
-                if log_lines:
-                    tt.log = (tt.log or "") + "\n".join(log_lines) + "\n"
-                ss.commit()
-            finally:
-                ss.close()
-
-        try:
-            result = eng.run(report=report)
-            ss = get_session()
-            try:
-                tt = ss.get(AlgoTask, task_id)
-                # 引擎收到 cancel 时只是 break 并正常返回，不能无条件写成 SUCCESS
-                if tt.status == "CANCELLED":
-                    tt.finished_at = now()
-                else:
-                    tt.status, tt.progress, tt.stage = "SUCCESS", 1.0, "done"
-                    tt.metrics_json = {**(tt.metrics_json or {}), "curve": result.curve,
-                                       "segments": eng._segment_report()}
-                    tt.finished_at = now()
-                tt.log = (tt.log or "") + "\n".join(result.log) + "\n"
-                for c in result.candidates:
-                    ss.add(AlgoCandidate(task_id=task_id, expression=c["expression"],
-                                         expr_json=c.get("expr_json"), train_ic=c["train_ic"],
-                                         valid_ic=c["valid_ic"], test_ic=c["test_ic"],
-                                         size=c["size"]))
-                ss.commit()
-            finally:
-                ss.close()
-        except Exception as e:  # noqa: BLE001 —— 任务失败落库，含堆栈摘要
-            ss = get_session()
-            try:
-                tt = ss.get(AlgoTask, task_id)
-                tt.status, tt.message = "FAILED", f"{type(e).__name__}: {e}"
-                ss.commit()
-            finally:
-                ss.close()
-        finally:
-            with _tasks_lock:
-                _running_engines.pop(task_id, None)
-    finally:
-        s.close()
-
 
 def cancel_task(task_id: str) -> bool:
-    with _tasks_lock:
-        eng = _running_engines.get(task_id)
-        if eng:
-            eng.cancel()
+    # 取消经文件旗标跨进程传递（引擎在独立子进程里，见 task_runner）
+    from ..lab.task_runner import request_cancel
+    request_cancel(task_id)
     s = get_session()
     try:
         t = s.get(AlgoTask, task_id)

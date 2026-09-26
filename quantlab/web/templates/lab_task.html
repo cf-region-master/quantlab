@@ -136,17 +136,52 @@ window.addEventListener('resize', ()=>{ if (ch) ch.resize(); });
 const tid = "{{ t.id }}";
 const st = "{{ t.status }}";
 if (st === 'RUNNING' || st === 'PENDING') {
+  let logOffset = (document.getElementById('log').textContent || '').length;
+  const t0 = Date.now(), p0 = {{ t.progress or 0 }};
+  let pPrev = p0, tPrev = t0;
   const timer = setInterval(async ()=>{
-    const r = await fetch('/api/lab/tasks/'+tid);
-    const j = await r.json();
-    document.getElementById('st').textContent = j.status;
-    document.getElementById('stage').textContent = (j.stage||'') + ' · ' + Math.round((j.progress||0)*100) + '%';
-    document.getElementById('bar').style.width = ((j.progress||0)*100) + '%';
-    document.getElementById('log').textContent = j.log || '';
-    if (['SUCCESS','FAILED','CANCELLED'].includes(j.status)) {
-      clearInterval(timer); setTimeout(()=>location.reload(), 800);
-    }
+    try {
+      const r = await fetch('/api/lab/tasks/'+tid+'?log_since='+logOffset);
+      const j = await r.json();
+      document.getElementById('st').textContent = j.status;
+      // 增量日志：只追加新到的部分，避免全文重渲染（大日志卡的来源之一）
+      if (j.log_new) {
+        const pre = document.getElementById('log');
+        pre.textContent += j.log_new;
+        pre.scrollTop = pre.scrollHeight;
+        logOffset += j.log_new.length;
+      }
+      const prog = j.progress || 0;
+      document.getElementById('stage').textContent = (j.stage||'') + ' · ' + Math.round(prog*100) + '%';
+      document.getElementById('bar').style.width = (prog*100) + '%';
+      // ETA：按近期进度速率外推（滑动窗口）
+      const now = Date.now();
+      if (prog > p0 && now > tPrev) {
+        const rate = (prog - pPrev) / Math.max(1, (now - tPrev));
+        const etaMin = rate > 0 ? Math.round(((1 - prog) / rate) / 600) / 100 : null;
+        if (etaMin != null && isFinite(etaMin))
+          document.getElementById('stage').textContent += ' · 剩余约 ' + etaMin + ' 分钟';
+        pPrev = prog; tPrev = now;
+      }
+      // 曲线增量重绘（服务端已降采样）
+      if (window._curveChart && j.curve) {
+        const c = j.curve;
+        const xKey = c.length && ('generation' in c[0]) ? 'generation' : 'round';
+        window._curveChart.setOption({
+          xAxis:{data:c.map(x=>x[xKey])},
+          series: xKey==='generation'
+            ? [{data:c.map(x=>x.best_ic)},{data:c.map(x=>x.mean_ic)}]
+            : [{data:c.map(x=>x.train_ic)},{data:c.map(x=>x.validation_ic)}]
+        });
+      }
+      // 终态判断直接用本响应的 status
+      if (['SUCCESS','FAILED','CANCELLED'].includes(j.status)) {
+        clearInterval(timer);
+        setTimeout(()=>location.reload(), 800);
+      }
+    } catch (e) { /* 网络抖动：下个周期重试 */ }
   }, 2000);
+  }, 4000);
 }
 const cf = document.getElementById('adoptForm');
 if (cf) cf.addEventListener('submit', async (ev)=>{

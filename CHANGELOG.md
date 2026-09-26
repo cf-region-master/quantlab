@@ -56,3 +56,38 @@
 ### 与主线的关系
 
 在 main@1bcbcc4 之上，不改变任何既有 API/页面契约；所有新配置键都有默认值，向后兼容。
+
+
+## feature/debug-upgrade-innovation · 第二批（2026-09-27）：异步治理 + AlphaGen 划分修复
+
+### 修复（用户实测痛点）
+
+1. **AlphaGen「自己划分」必 FAILED —— 根因修复**：`segment_split` 对结束类边界
+   （train_end/valid_end/test_end）误用 searchsorted-left，周末/节假日的边界被映射到
+   下一个交易日、与下一段起点撞位，顺序校验误判拒绝。按自然月末/年末划分的合理输入
+   全部失败。现改为：开始类边界取 ≥ 日期的首个交易日，结束类边界取 ≤ 日期的最后一个
+   交易日。回归测试 3 项（周末边界/相邻交易日/部分边界）。
+2. **表单防呆**：lab 页三个日期默认值原为同一起点，直接提交「自己划分」会 purge 后空段
+   而 FAILED。现默认按 60%/80% 分割点预填；后端在创建任务前干跑 segment_split，
+   非法边界返回 400 + 人话提示（不再入队后失败）。
+3. **轮询接口 NaN 500**：训练曲线早期轮次常含 NaN（entropy 等），Starlette JSONResponse
+   禁 NaN 导致轮询接口 500。响应统一做非有限值清洗。
+
+### 升级：异步治理（根治「前端卡」）
+
+| 改动 | 说明 | 实测 |
+|---|---|---|
+| **引擎进程隔离** | GP/AlphaGen 从 uvicorn 同进程线程改为独立子解释器（`python -m quantlab.lab.task_runner`）。numpy/torch 不再占 Web 进程 GIL；Windows 下不依赖 multiprocessing spawn 的 `__main__` 重导；服务重启不影响已派发任务 | 4 万步 GPU 挖矿运行中，全站页面最大延迟 **119ms**（多数 <40ms） |
+| 信号/回测任务化 | 创建信号（walk-forward 拟合）与回测（逐日模拟）移出 HTTP 请求路径：POST 立即 303 到 `/jobs/{id}` 进度页，完成自动跳结果实体页（复用 BatchJob 轮询） | 创建信号 303 即回，job SUCCESS → /signals/{id} |
+| SQLite WAL | journal_mode=WAL + busy_timeout=5000 + synchronous=NORMAL：挖矿高频写进度不再顶掉页面读 | — |
+| 进度写节流 | 子进程 report() ≥2 秒才落盘一次，减少锁竞争 | — |
+| 轮询瘦身 | `/api/lab/tasks/{id}` 支持 `log_since` 增量日志（不再全量回传）、`curve_max` 服务端降采样；前端只追加新日志、ETA 按进度速率外推 | — |
+| 取消跨进程 | 取消旗标经文件传递（`data/store/task_cancel/{id}`），子进程在进度回调里检测并停止引擎 | — |
+
+### 其他
+
+- `AlphaGenParams.device`（auto/cpu/cuda）：本机 RTX 4060 + torch cu130 实测 GPU 训练
+  （device=cuda 时 summary.device=cuda）；无 CUDA 自动回落 CPU。
+- `norm_pool_id` 兼容内置池字符串键（`index_csi300` → 数字 id），不再 `int()` 崩溃。
+- 任务创建前预检三段边界（两引擎共用）；陈旧 PENDING 任务在启动时清理。
+- 测试 53 → **57 项全部通过**（新增：边界语义 3、池键兼容 1）。
