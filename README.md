@@ -46,6 +46,7 @@ python -m uvicorn quantlab.api.main:app --port 8000
 
 # 6) 组合方式对照实验（同因子集只改组合模型，RankIC/NW t 对照表落盘）
 python scripts/compare_combinations.py --factors 1,2,3 --start 2023-01-01 --end 2025-06-30
+#    加 --backtest 同时对照各模型的净值表现；--rebalances weekly,monthly 对照调仓频率
 
 # 7) 测试（数据完整性 / 因子正确性 / 回测门禁 / 复现 / 分段防泄漏 / 沙箱 / 组合器）
 python -m pytest tests/ -q
