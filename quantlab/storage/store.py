@@ -1898,42 +1898,65 @@ def run_backtest_for_signal(*, signal_id: int, start_date, end_date,
 
 
 def compare_backtests(a_id: int, b_id: int) -> dict:
-    """两条回测的并排对照：共同交易日对齐净值 + 指标并排 + 配置差异摘要。"""
-    a, b = backtest_result(a_id), backtest_result(b_id)
-    if a is None or b is None:
-        raise ValueError(f"回测记录不存在: a={a_id} b={b_id}")
-    na = pd.Series(a["nav"]["values"], index=pd.to_datetime(a["nav"]["index"]))
-    nb = pd.Series(b["nav"]["values"], index=pd.to_datetime(b["nav"]["index"]))
-    joined = pd.concat({"A": na, "B": nb}, axis=1, join="inner").dropna()
-    diff_rows = []
-    ca, cb = a.get("config") or {}, b.get("config") or {}
-    for section in ("signal", "rebalance", "portfolio", "cost", "sample"):
-        sa, sb = ca.get(section) or {}, cb.get(section) or {}
-        for k in sorted(set(sa) | set(sb)):
-            if k.startswith("_"):
-                continue
-            if sa.get(k) != sb.get(k):
-                diff_rows.append({"section": section, "key": k,
-                                  "a": sa.get(k), "b": sb.get(k)})
+    return compare_backtests_multi([a_id, b_id])
+
+
+def compare_backtests_multi(ids: list[int]) -> dict:
+    """N 条回测的并排对照：共同交易日对齐净值 + 指标并排 + 配置差异摘要。
+
+    历史：原为两条专用（a/b）；升级为 N 条通用版，信号详情页对比入口与
+    列表页表单均可传任意条数。
+    """
+    ids = [int(i) for i in ids]
+    runs = []
+    for rid in ids:
+        r = backtest_result(rid)
+        if r is None:
+            raise ValueError(f"回测记录不存在: bt{rid}")
+        runs.append(r)
+    series = {}
+    for idx, r in enumerate(runs):
+        series[f"R{idx + 1}"] = pd.Series(r["nav"]["values"],
+                                          index=pd.to_datetime(r["nav"]["index"]))
+    joined = pd.concat(series, axis=1, join="inner").dropna()
+
+    # 指标并排：每行一个指标，各列一条回测
+    metric_keys = ("cumulative_return", "annualized_return", "annualized_vol",
+                   "annualized_sharpe", "max_drawdown")
     metrics_rows = []
-    for grp, keys in (("net", ("cumulative_return", "annualized_return", "annualized_vol",
-                               "annualized_sharpe", "max_drawdown")),):
+    for k in metric_keys:
+        metrics_rows.append({"metric": k,
+                             **{f"R{i + 1}": ((r.get("metrics") or {}).get("net", {}) or {}).get(k)
+                                for i, r in enumerate(runs)}})
+
+    # 配置差异：与第一条对照，任一键不同即列出
+    diff_rows = []
+    base_cfg = runs[0].get("config") or {}
+    for section in ("signal", "rebalance", "portfolio", "cost", "sample"):
+        secs = [(c.get(section) or {}) for c in (r.get("config") or {} for r in runs)]
+        keys = sorted(set().union(*[set(s) for s in secs]))
         for k in keys:
-            va = (a.get("metrics") or {}).get(grp, {}).get(k)
-            vb = (b.get("metrics") or {}).get(grp, {}).get(k)
-            metrics_rows.append({"metric": k, "a": va, "b": vb})
+            if str(k).startswith("_"):
+                continue
+            vals = [s.get(k) for s in secs]
+            if any(v != vals[0] for v in vals[1:]):
+                diff_rows.append({"section": section, "key": k, "values": vals})
+
+    runs_meta = []
+    for i, r in enumerate(runs):
+        runs_meta.append({"slot": f"R{i + 1}", "id": ids[i], "name": r.get("name"),
+                          "signal_id": r.get("signal_id"),
+                          "checks_all_pass": (r.get("checks") or {}).get("all_pass")})
     return {
-        "a": {"id": a_id, "name": a.get("name"), "signal_id": a.get("signal_id"),
-              "metrics": a.get("metrics"), "checks_all_pass":
-                  (a.get("checks") or {}).get("all_pass")},
-        "b": {"id": b_id, "name": b.get("name"), "signal_id": b.get("signal_id"),
-              "metrics": b.get("metrics"), "checks_all_pass":
-                  (b.get("checks") or {}).get("all_pass")},
+        "runs": runs_meta,
         "aligned": {"index": [str(d.date()) for d in joined.index],
-                    "A": [float(v) for v in joined["A"]],
-                    "B": [float(v) for v in joined["B"]]},
+                    "series": {name: [float(v) if v == v and np.isfinite(v) else None
+                                      for v in joined[name].tolist()]
+                               for name in joined.columns}},
         "n_common_days": int(len(joined)),
-        "metrics_rows": metrics_rows,
+        "metrics_keys": list(metric_keys),
+        "metrics_table": {k: [{k: ((r.get("metrics") or {}).get("net", {}) or {}).get(k)}
+                              for r in runs] for k in metric_keys},
         "config_diff": diff_rows,
     }
 

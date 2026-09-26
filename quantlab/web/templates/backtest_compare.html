@@ -1,62 +1,63 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="crumb"><a href="/backtests">回测</a> / 对比</div>
-<h1>回测对比：#{{ a.id }} vs #{{ b.id }}</h1>
+<div class="crumb"><a href="/backtests">回测</a> / 对比（{{ runs|length }} 条）</div>
+<h1>回测对比</h1>
 <div class="kv">
-  <div class="k">A</div><div>#{{ a.id }} {{ a.name }}（信号 {{ a.signal_name or a.signal_id }}）· 检查 {% if a.checks_all_pass %}<span class="pos">PASS</span>{% else %}<span class="neg">—</span>{% endif %}</div>
-  <div class="k">B</div><div>#{{ b.id }} {{ b.name }}（信号 {{ b.signal_name or b.signal_id }}）· 检查 {% if b.checks_all_pass %}<span class="pos">PASS</span>{% else %}<span class="neg">—</span>{% endif %}</div>
+  {% for r in runs %}
+  <div class="k">{{ r.slot }}</div>
+  <div>bt{{ r.id }} {{ r.name }}（信号 {{ r.signal_name or r.signal_id }}）· 检查
+    {% if r.checks_all_pass %}<span class="pos">PASS</span>{% else %}<span class="neg">—</span>{% endif %}</div>
+  {% endfor %}
   <div class="k">共同交易日</div><div>{{ n_common_days }}</div>
 </div>
 
 <h2>指标并排</h2>
 <table class="grid">
-  <tr><th>指标</th><th>A (#{{ a.id }})</th><th>B (#{{ b.id }})</th></tr>
-  {% for r in metrics_rows %}
+  <tr><th>指标</th>{% for r in runs %}<th>{{ r.slot }} (bt{{ r.id }})</th>{% endfor %}</tr>
+  {% for k in metrics_keys %}
   <tr>
-    <td>{{ r.metric }}</td>
-    <td>{% if r.a is not none %}{{ '%.4f'|format(r.a) if r.a|abs < 10 else '%.2f'|format(r.a) }}{% else %}—{% endif %}</td>
-    <td>{% if r.b is not none %}{{ '%.4f'|format(r.b) if r.b|abs < 10 else '%.2f'|format(r.b) }}{% else %}—{% endif %}</td>
+    <td>{{ k }}</td>
+    {% for col in metrics_table[k] %}
+    {% set v = col[k] %}
+    <td>{% if v is not none %}{{ '%.4f'|format(v) if v|abs < 10 else '%.2f'|format(v) }}{% else %}—{% endif %}</td>
+    {% endfor %}
   </tr>
   {% endfor %}
 </table>
 
-<h2>配置差异（A vs B）</h2>
+<h2>配置差异（与第一条对照）</h2>
 {% if config_diff %}
 <table class="grid">
-  <tr><th>节</th><th>键</th><th>A</th><th>B</th></tr>
+  <tr><th>节</th><th>键</th>{% for r in runs %}<th>{{ r.slot }}</th>{% endfor %}</tr>
   {% for d in config_diff %}
   <tr><td>{{ d.section }}</td><td>{{ d.key }}</td>
-      <td class="mono">{{ d.a }}</td><td class="mono">{{ d.b }}</td></tr>
+      {% for v in d.values %}<td class="mono">{{ v }}</td>{% endfor %}</tr>
   {% endfor %}
 </table>
 {% else %}
-<p class="muted">两条回测的配置完全一致（本页差异为空）。对照实验的"只改一个因素"可用 configs/experiment.yaml + pipeline 固化。</p>
+<p class="muted">各条回测配置完全一致（单因素对照的理想状态）。对照实验的固化可用 configs/experiment.yaml + pipeline。</p>
 {% endif %}
 
 <h2>净值对齐对比（共同交易日，V0 对齐）</h2>
-<div id="cmpChart" class="chart" style="height:360px;"></div>
+<div id="cmpChart" class="chart" style="height:380px;"></div>
 
 <script>
-const RAW = {{ raw|tojson }};
-const AL = {{ aligned|tojson }};
+const DATA = {{ cmp_data|tojson }};
 const cmp = echarts.init(document.getElementById('cmpChart'));
-const mkSeries = (name, obj, extra) => {
-  if (!obj || !obj.values) return null;
-  return {name, type:'line', showSymbol:false, ...extra,
-          data:obj.index.map((d,i)=>[d, obj.values[i]==null?null:Math.round(obj.values[i]*10000)/10000])};
-};
-const series = [
-  mkSeries('A (#{{ a.id }}) 净', RAW.a.nav, {}),
-  mkSeries('B (#{{ b.id }}) 净', RAW.b.nav, {}),
-  mkSeries('A 毛', RAW.a.nav_gross, {lineStyle:{type:'dashed'}}),
-  mkSeries('B 毛', RAW.b.nav_gross, {lineStyle:{type:'dashed'}}),
-].filter(Boolean);
+const colors = ['#1a5fb4', '#b3261e', '#1a7f37', '#9a6700', '#8250df'];
+const series = DATA.runs.map((r, i) => ({
+  name: `${r.slot} (bt${r.id})`,
+  type: 'line', showSymbol: false,
+  lineStyle: {color: colors[i % colors.length]},
+  itemStyle: {color: colors[i % colors.length]},
+  data: DATA.aligned.series[r.slot] || []
+}));
 cmp.setOption({
-  title:{text:'A/B 净值（共同交易日）', textStyle:{fontSize:13}},
-  tooltip:{trigger:'axis'}, legend:{},
-  xAxis:{type:'category', data:AL.index},
-  yAxis:{type:'value', scale:true},
-  series, dataZoom:[{type:'inside'}]
+  title: {text: '净值（共同交易日，V0 对齐）', textStyle: {fontSize: 13}},
+  tooltip: {trigger: 'axis'}, legend: {},
+  xAxis: {type: 'category', data: DATA.aligned.index},
+  yAxis: {type: 'value', scale: true},
+  series, dataZoom: [{type: 'inside'}]
 });
 </script>
 {% endblock %}

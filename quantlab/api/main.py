@@ -385,12 +385,20 @@ def page_backtest_new(request: Request, signal_id: int | None = None):
 
 
 @app.get("/backtests/compare", response_class=HTMLResponse)
-def page_backtest_compare(request: Request, a: int, b: int):
-    data = store.compare_backtests(a, b)
-    data["raw"] = {"a": store.backtest_result(a) or {}, "b": store.backtest_result(b) or {}}
+def page_backtest_compare(request: Request, a: int | None = None, b: int | None = None,
+                          ids: str = ""):
+    id_list = [int(x) for x in ids.split(",") if x.strip()]
+    if not id_list and a is not None and b is not None:
+        id_list = [a, b]
+    if len(id_list) < 2:
+        raise HTTPException(422, "至少需要两条回测")
+    data = store.compare_backtests_multi(id_list)
+    data["raw"] = {f"R{i + 1}": store.backtest_result(rid) or {}
+                   for i, rid in enumerate(id_list)}
+    data["cmp_data"] = {"runs": data["runs"], "aligned": data["aligned"]}
     sig_names = {s["id"]: s["name"] for s in store.list_signals()}
-    data["a"]["signal_name"] = sig_names.get(data["a"].get("signal_id"), "")
-    data["b"]["signal_name"] = sig_names.get(data["b"].get("signal_id"), "")
+    for i, rm in enumerate(data["runs"]):
+        rm["signal_name"] = sig_names.get(rm.get("signal_id"), "")
     return templates.TemplateResponse(request, "backtest_compare.html", data)
 
 
