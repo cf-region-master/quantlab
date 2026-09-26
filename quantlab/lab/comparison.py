@@ -26,7 +26,8 @@ DEFAULT_MODELS = ("equal_weight", "ic_weight", "ic_weight_rolling",
 def compare_combinations(factor_ids: list[int], start: str, end: str,
                          horizon: int = 5, models: list[str] | None = None,
                          min_cross_section: int = 10,
-                         include_backtest: bool = False) -> dict[str, Any]:
+                         include_backtest: bool = False,
+                         rebalance_freqs: list[str] | None = None) -> dict[str, Any]:
     """返回 {model: {"rank_ic_mean","t_naive","t_nw","n_obs"}} 与实验元信息。
 
     include_backtest=True 时对每个模型追加一次真实模拟成交（周度 top10 等权，
@@ -76,11 +77,15 @@ def compare_combinations(factor_ids: list[int], start: str, end: str,
                      and np.isfinite(summ["t_stat_nw"]) else None,
                      "n_obs": summ["n_obs"]}
             if include_backtest:
-                try:
-                    bt = _quick_backtest(panel, mk, start, end)
-                    entry.update({f"bt_{k}": v for k, v in bt.items()})
-                except Exception as e:  # noqa: BLE001
-                    entry.update({"bt_error": f"{type(e).__name__}: {e}"})
+                freqs = rebalance_freqs or ["weekly"]
+                for fq in freqs:
+                    try:
+                        bt = _quick_backtest(panel, mk, start, end, rebalance_freq=fq)
+                        tag = fq if len(freqs) > 1 else ""
+                        for k, v in bt.items():
+                            entry[f"bt_{k}" + (f"_{fq}" if tag else "")] = v
+                    except Exception as e:  # noqa: BLE001
+                        entry[f"bt_error_{fq}"] = f"{type(e).__name__}: {e}"
             out[m] = entry
         except Exception as e:  # noqa: BLE001 —— 单模型失败记录原因，不中断对照
             out[m] = {"error": f"{type(e).__name__}: {e}"}
@@ -95,14 +100,15 @@ def compare_combinations(factor_ids: list[int], start: str, end: str,
                      "均为描述性统计")}
 
 
-def _quick_backtest(panel: pd.DataFrame, mk, start: str, end: str) -> dict[str, float]:
-    """内存版组合回测（周度 top10 等权，配置费率），返回关键净指标。"""
+def _quick_backtest(panel: pd.DataFrame, mk, start: str, end: str,
+                    rebalance_freq: str = "weekly") -> dict[str, float]:
+    """内存版组合回测（top10 等权，配置费率），返回关键净指标。"""
     from ..backtest.engine import run_backtest
     from ..config import load_config
 
     cfg = load_config()
     bt_cfg = dict(cfg.backtest)
-    bt_cfg["rebalance"] = {**bt_cfg["rebalance"], "freq": "weekly"}
+    bt_cfg["rebalance"] = {**bt_cfg["rebalance"], "freq": rebalance_freq}
     bt_cfg["portfolio"] = {**bt_cfg["portfolio"], "top_n": 10, "weighting": "equal_weight"}
     bt_cfg["sample"] = {"start": start, "end": end}
     bt_cfg["trading_days_per_year"] = int(cfg.data["trading_days_per_year"])

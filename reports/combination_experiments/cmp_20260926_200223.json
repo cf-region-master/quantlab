@@ -1,0 +1,99 @@
+{
+  "factor_ids": [
+    1,
+    2,
+    3
+  ],
+  "factor_names": [
+    "20日低波动",
+    "20日动量",
+    "5日反转"
+  ],
+  "start": "2023-01-01",
+  "end": "2025-06-30",
+  "horizon": 5,
+  "env": "csi300_sample50",
+  "models": {
+    "equal_weight": {
+      "rank_ic_mean": 0.025515,
+      "t_naive": 2.671,
+      "t_nw": 1.551,
+      "n_obs": 601,
+      "bt_annualized_return_weekly": 0.055261962213899896,
+      "bt_sharpe_weekly": 0.30996688843609643,
+      "bt_max_drawdown_weekly": 0.1780452789618272,
+      "bt_total_cost_weekly": 238617.2616258901,
+      "bt_turnover_sum_weekly": 131.7989243863056,
+      "bt_annualized_return_monthly": 0.09808672569907184,
+      "bt_sharpe_monthly": 0.5721120408093259,
+      "bt_max_drawdown_monthly": 0.16214012660678223,
+      "bt_total_cost_monthly": 70470.92090698282,
+      "bt_turnover_sum_monthly": 36.45364598830272
+    },
+    "ic_weight": {
+      "rank_ic_mean": -0.020763,
+      "t_naive": -2.303,
+      "t_nw": -1.283,
+      "n_obs": 601,
+      "bt_annualized_return_weekly": 0.08155198373790373,
+      "bt_sharpe_weekly": 0.3855389167460398,
+      "bt_max_drawdown_weekly": 0.3063560482505874,
+      "bt_total_cost_weekly": 223981.00321005477,
+      "bt_turnover_sum_weekly": 115.48283496493767,
+      "bt_annualized_return_monthly": 0.10294761637584382,
+      "bt_sharpe_monthly": 0.4603508195228851,
+      "bt_max_drawdown_monthly": 0.2855689013114324,
+      "bt_total_cost_monthly": 79684.17518882178,
+      "bt_turnover_sum_monthly": 43.28078393048188
+    },
+    "ic_weight_rolling": {
+      "rank_ic_mean": 0.019181,
+      "t_naive": 1.963,
+      "t_nw": 1.086,
+      "n_obs": 601,
+      "bt_annualized_return_weekly": -0.060720471534549514,
+      "bt_sharpe_weekly": -0.37173523491880933,
+      "bt_max_drawdown_weekly": 0.27234050789933084,
+      "bt_total_cost_weekly": 187163.7054845206,
+      "bt_turnover_sum_weekly": 117.17707752049584,
+      "bt_annualized_return_monthly": -0.06483200497432517,
+      "bt_sharpe_monthly": -0.3805640364396499,
+      "bt_max_drawdown_monthly": 0.26255508299963115,
+      "bt_total_cost_monthly": 63063.49052447295,
+      "bt_turnover_sum_monthly": 40.47693672122676
+    },
+    "ic_meanvar": {
+      "rank_ic_mean": 0.020201,
+      "t_naive": 2.095,
+      "t_nw": 1.174,
+      "n_obs": 601,
+      "bt_annualized_return_weekly": -0.006036035478567459,
+      "bt_sharpe_weekly": -0.03355008363298117,
+      "bt_max_drawdown_weekly": 0.2765920408698881,
+      "bt_total_cost_weekly": 215989.04512671215,
+      "bt_turnover_sum_weekly": 125.16015848985633,
+      "bt_annualized_return_monthly": -0.06650119593817927,
+      "bt_sharpe_monthly": -0.39177516921980193,
+      "bt_max_drawdown_monthly": 0.27314586642905647,
+      "bt_total_cost_monthly": 65807.23952465528,
+      "bt_turnover_sum_monthly": 42.043454955389336
+    },
+    "ortho_ic_weight_rolling": {
+      "rank_ic_mean": 0.0245,
+      "t_naive": 2.582,
+      "t_nw": 1.464,
+      "n_obs": 601,
+      "bt_annualized_return_weekly": -0.026893567093316473,
+      "bt_sharpe_weekly": -0.15554606795833653,
+      "bt_max_drawdown_weekly": 0.28333535859945347,
+      "bt_total_cost_weekly": 221289.7799657087,
+      "bt_turnover_sum_weekly": 134.6818704626153,
+      "bt_annualized_return_monthly": -0.1002121382526695,
+      "bt_sharpe_monthly": -0.5896849929302379,
+      "bt_max_drawdown_monthly": 0.33237710356819594,
+      "bt_total_cost_monthly": 60731.633911249446,
+      "bt_turnover_sum_monthly": 41.345600708491936
+    }
+  },
+  "note": "对照纪律：同因子集/同预处理/同区间/同标签，只改组合模型；t_nw 为 Newey-West 修正 t（lag=h-1，重叠标签纪律）；均为描述性统计"
+}

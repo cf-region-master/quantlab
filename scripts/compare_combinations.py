@@ -31,14 +31,18 @@ def main() -> int:
     ap.add_argument("--models", default=None,
                     help="逗号分隔；默认全部轻量组合模型")
     ap.add_argument("--backtest", action="store_true",
-                    help="每个模型追加一次真实模拟成交（周度 top10 等权）")
+                    help="每个模型追加一次真实模拟成交（top10 等权）")
+    ap.add_argument("--rebalances", default=None,
+                    help="调仓频率列表（逗号分隔，如 weekly,monthly）；需 --backtest")
     args = ap.parse_args()
 
     factor_ids = [int(x) for x in args.factors.split(",") if x.strip()]
     models = [x for x in args.models.split(",") if x.strip()] if args.models else None
+    freqs = [x for x in args.rebalances.split(",") if x.strip()] if args.rebalances else None
     res = compare_combinations(factor_ids, args.start, args.end,
                                horizon=args.horizon, models=models,
-                               include_backtest=args.backtest)
+                               include_backtest=args.backtest,
+                               rebalance_freqs=freqs)
 
     print(f"\n组合方式对照实验（因子 {res['factor_ids']} · h={args.horizon} · "
           f"{args.start} ~ {args.end}）")
