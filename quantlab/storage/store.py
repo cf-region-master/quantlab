@@ -1759,7 +1759,24 @@ def create_signal(*, name: str, description: str = "", factor_ids: list[int],
                 s2.commit()
             finally:
                 s2.close()
-    return {"id": sig_id}
+    # 组合前查重预警：新信号与既有信号日收益 |ρ|≥0.9 时在返回与详情页提示
+    # （同一敞口的重复计价，组合不掉风险只放大交易成本 —— 见 signal_similarity）
+    try:
+        sim = signal_similarity_matrix()
+        new_name = next((x["name"] for x in sim["signals"] if x["id"] == sig_id), "")
+        dup = [d for d in sim.get("duplicates", []) if d["a"] == new_name or d["b"] == new_name]
+    except Exception:
+        dup = []
+    s = get_session()
+    try:
+        sg = s.get(Signal, sig_id)
+        if dup:
+            warn = " ⚠ 疑似重复敞口：" + "；".join(f"{d['a']} × {d['b']}（ρ={d['corr']}）" for d in dup)
+            sg.description = (sg.description or "") + warn
+            s.commit()
+    finally:
+        s.close()
+    return {"id": sig_id, "duplicates": dup}
 
 
 def diagnose_signal(signal_id: int, horizons: list[int] | None = None) -> dict:
