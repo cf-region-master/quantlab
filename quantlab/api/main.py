@@ -1078,7 +1078,9 @@ def page_runs(request: Request):
     if exp_dir.exists():
         for pth in sorted(exp_dir.glob("*.json"), reverse=True)[:20]:
             try:
-                experiments.append(json.loads(pth.read_text(encoding="utf-8")))
+                d = json.loads(pth.read_text(encoding="utf-8"))
+                d["filename"] = pth.stem
+                experiments.append(d)
             except Exception:  # noqa: BLE001
                 pass
     return templates.TemplateResponse(request, "runs.html",

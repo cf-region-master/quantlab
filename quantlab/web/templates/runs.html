@@ -41,7 +41,8 @@
 {% for e in experiments %}
 <div class="card" style="margin-bottom:14px;">
   <div class="k">因子 {{ e.factor_ids }} · h={{ e.horizon }} · {{ e.start }} ~ {{ e.end }}
-    {% if e.filename %} · <a href="/experiments/{{ e.filename }}.csv">导出 CSV</a>{% endif %}
+    {% if e.filename %} · <a href="/experiments/{{ e.filename }}.csv">导出 CSV</a>
+    · <a href="#" onclick="fetch('/experiments/{{ e.filename }}/rerun',{method:'POST'}).then(()=>location.reload());return false;">复跑</a>{% endif %}
     {% if e.robustness %}<span class="muted">· 方向一致 {{ '%.0f%%'|format(e.robustness.direction_consistency*100) }} · NW 显著 {{ e.robustness.n_sig_nw }}/{{ e.robustness.n_models }}</span>{% endif %}</div>
   <table class="grid" style="margin-top:8px;">
     <thead><tr><th>模型</th><th>RankIC 均值</th><th>t(普通)</th><th>t(NW)</th><th>N</th></tr></thead>
