@@ -91,6 +91,45 @@ def newey_west_tstat(series: pd.Series, lag: int) -> float:
     return mu / se if se > 0 else float("nan")
 
 
+def minimum_detectable_effect(n_obs: int, alpha: float = 0.05,
+                              power: float = 0.80) -> float:
+    """最小可检测效应（MDE）：在给定样本量下能以指定功效检出的最小 |IC|。
+
+    公式：MDE ≈ (z_{α/2} + z_{β}) / √n
+    对于 n=601、α=0.05、power=0.80：MDE ≈ 2.8/24.5 ≈ 0.114
+    这意味着大多数真实因子（IC 0.01~0.05）在此样本量下无法被可靠检出——
+    这是量化研究的根本约束，而非平台缺陷。
+    """
+    from scipy.stats import norm
+    z_alpha = norm.ppf(1 - alpha / 2)
+    z_beta = norm.ppf(power)
+    return float((z_alpha + z_beta) / np.sqrt(n_obs))
+
+
+def power_analysis(n_obs: int, observed_ic: float) -> dict[str, Any]:
+    """统计功效分析：当前样本量下能检出多大效应 + 观测效应的功效。"""
+    from scipy.stats import norm
+    z_alpha = norm.ppf(1 - 0.05 / 2)
+    z_power = norm.ppf(0.80)
+    mde_80 = (z_alpha + z_power) / np.sqrt(n_obs) if n_obs > 0 else float("nan")
+    # 观测效应的统计功效
+    if observed_ic != 0 and n_obs > 0:
+        z_obs = abs(observed_ic) * np.sqrt(n_obs)
+        power_obs = float(norm.cdf(z_obs - z_alpha))
+    else:
+        power_obs = 0.0
+    return {
+        "n_obs": n_obs,
+        "mde_80pct": round(float(mde_80), 6),
+        "observed_ic_power": round(power_obs, 4),
+        "interpretation": (
+            f"在 {n_obs} 个观测下，80% 功效可检出的最小 |IC| ≈ {mde_80:.4f}。"
+            f"若真实 IC < {mde_80:.4f}，则本研究无法可靠检出——"
+            "这是样本量的根本约束，需扩大样本或接受较高的假阴性率。"),
+        "note": "功效分析基于正态近似；因子 IC 通常有厚尾和自相关，实际 MDE 可能更大。",
+    }
+
+
 def sig_stars(t: float | None) -> str:
     """NW t 的显著性星号（描述性参考阈值，非严格假设检验结论）。
 
