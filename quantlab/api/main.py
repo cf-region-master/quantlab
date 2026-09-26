@@ -1131,6 +1131,35 @@ def api_signal_weights_csv(signal_id: int):
                                       f'attachment; filename="signal{signal_id}_weights.csv"'})
 
 
+@app.get("/api/factors/incremental-ic")
+def api_factors_incremental_ic(ids: str = "", horizon: int = 5):
+    """按 ids 顺序做 Schmidt 正交化，返回各因子的【增量 RankIC】——
+    排后面的因子只保留前面解释不掉的信息，其 IC 即增量贡献。
+    用于回答"这个因子在已有因子之外还提供了多少新信息"。"""
+    id_list = [int(x) for x in ids.split(",") if x.strip()]
+    if len(id_list) < 2:
+        raise HTTPException(422, "至少 2 个因子")
+    from ..factors.combine import ortho_incremental_ic
+    panels = {}
+    names = {}
+    s = get_session()
+    try:
+        for fid in id_list:
+            f = s.get(Factor, fid)
+            if f is None:
+                raise HTTPException(404, f"因子 {fid} 不存在")
+            names[fid] = f.name
+            panels[str(fid)] = store.factor_values(fid)
+    finally:
+        s.close()
+    inc = ortho_incremental_ic(panels, store.market().close_adj,
+                               [str(i) for i in id_list], h=horizon, min_n=10)
+    return {"order": [{"id": i, "name": names[i]} for i in id_list],
+            "incremental_rank_ic": {str(i): (round(v, 6) if np.isfinite(v) else None)
+                                    for i, v in inc.items()},
+            "note": "顺序=ids 顺序：越靠前保留越多原始信息；增量 IC 为该因子在前面因子之外的新贡献"}
+
+
 @app.get("/api/factors/correlation")
 def api_factor_correlation(ids: str = ""):
     """选中因子的相关矩阵 + 去冗余建议（组合前体检，供 signals/new 热力图）。"""

@@ -65,7 +65,19 @@
         let msg = '建议保留：' + (d.keep.join('、') || '（无）');
         if (d.drop.length) msg += '；建议剔除：' + d.drop.map(x=>`${x.key}（与 ${x.vs} 相关 ${x.corr}）`).join('、');
         msg += `（阈值 |ρ|≥${d.threshold}，按 |RankIC| 降序贪心保留）`;
-        document.getElementById('corrSuggest').textContent = msg;
+        // 增量 IC（Schmidt 正交化分解）：排后面的因子只保留前面解释不掉的信息
+        try {
+          const r2 = await fetch('/api/factors/incremental-ic?ids=' + ids.join(',') + '&horizon=5');
+          if (r2.ok) {
+            const j2 = await r2.json();
+            const parts = j2.order.map(o=>{
+              const v = j2.incremental_rank_ic[String(o.id)];
+              return `${o.name} ${v==null?'NaN':(v>0?'+':'')+v.toFixed(4)}`;
+            });
+            msg += '<br>增量 RankIC（正交化分解，顺序=选择顺序）：' + parts.join('、');
+          }
+        } catch(e) {}
+        document.getElementById('corrSuggest').innerHTML = msg;
       }, 400);
     });
   }
