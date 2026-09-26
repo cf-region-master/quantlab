@@ -87,3 +87,26 @@ def test_daily_ic_series_constant_nan():
     const = pd.DataFrame(1.0, index=idx, columns=list("AB"))
     s = daily_ic_series(const, close, h=5, min_n=3)
     assert s.isna().all()  # 常数因子记缺失，不改 0
+
+
+def test_orthogonalize_incremental_ic():
+    """克隆因子的正交残差应只剩噪声（增量 IC≈0），第一个因子原样保留。"""
+    rng = np.random.default_rng(5)
+    n = 300
+    idx = pd.bdate_range("2023-01-02", periods=n)
+    cols = list("ABCDE")
+    f0 = pd.DataFrame(rng.normal(0, 1, (n, 5)), index=idx, columns=cols)
+    clone = f0 + rng.normal(0, 0.01, (n, 5))
+    noise = pd.DataFrame(rng.normal(0, 1, (n, 5)), index=idx, columns=cols)
+    from quantlab.factors.combine import orthogonalize
+    ortho, order = orthogonalize({"f0": f0, "clone": clone, "noise": noise},
+                                 ["f0", "clone", "noise"])
+    assert order == ["f0", "clone", "noise"]
+    pd.testing.assert_frame_equal(ortho["f0"], f0)                 # 第一个不变
+    ratio = float(ortho["clone"].stack().std() / clone.stack().std())
+    assert ratio < 0.05                                            # 克隆只剩 eps
+    corr = float(ortho["f0"].stack().corr(ortho["clone"].stack()))
+    assert abs(corr) < 0.05                                        # 残差近正交
+    # noise 与前两者本就独立 → 残差方差基本不变
+    assert float(ortho["noise"].stack().std()) == pytest.approx(
+        float(noise.stack().std()), rel=0.1)

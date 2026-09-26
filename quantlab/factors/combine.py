@@ -173,3 +173,57 @@ def combination_gain(single_ics: dict[str, float], combined_ic: float) -> dict:
             "combined_ic": round(float(combined_ic), 6),
             "gain_vs_best_single": None if not np.isfinite(gain) else round(gain, 4),
             "sign_flip": sign_flip, "note": note}
+
+
+# ---------------- Schmidt 正交化（增量信息分解） ----------------
+def orthogonalize(panels: dict[str, pd.DataFrame],
+                  order: list[str]) -> tuple[dict[str, pd.DataFrame], list[str]]:
+    """按给定顺序做截面 Gram-Schmidt：每个因子对【前面因子的残差基】回归取残差。
+
+    语义：order 越靠前保留越多原始信息（第一个因子原样保留）；排后面的因子
+    只保留前面解释不掉的【增量信息】—— 正交残差的 IC 即增量 IC。
+    NaN 处理：投影计算用 0 填充，残差回写原 NaN 掩码（近似口径，已文档化）。
+    返回 (正交化面板 dict, 实际顺序)。
+    """
+    keys = [k for k in order if k in panels]
+    if not keys:
+        raise ValueError("orthogonalize: 没有可用面板")
+    ref = panels[keys[0]]
+    long = pd.concat([panels[k].stack(future_stack=True) for k in keys], axis=1)
+    long.columns = keys
+    arr = long.to_numpy(dtype="float64")
+    nan_mask = ~np.isfinite(arr)
+    filled = np.where(nan_mask, 0.0, arr)
+
+    basis = np.zeros((arr.shape[0], 0))
+    out = np.full_like(arr, np.nan)
+    for i, k in enumerate(keys):
+        v = filled[:, i]
+        r = v - (basis @ (basis.T @ v) if basis.shape[1] else 0.0)
+        r[nan_mask[:, i]] = np.nan
+        out[:, i] = r
+        rr = np.where(nan_mask[:, i], 0.0, r)
+        norm = float(np.linalg.norm(rr))
+        if norm > 1e-12:
+            q = rr / norm
+            q = q - basis @ (basis.T @ q)
+            qn = float(np.linalg.norm(q))
+            if qn > 1e-12:
+                basis = np.hstack([basis, (q / qn)[:, None]])
+
+    parts = []
+    for i in range(len(keys)):
+        res = pd.Series(out[:, i], index=long.index).unstack()
+        parts.append(res.reindex(index=ref.index, columns=ref.columns))
+    return {k: parts[i] for i, k in enumerate(keys)}, keys
+
+
+def ortho_incremental_ic(panels: dict[str, pd.DataFrame], close_adj: pd.DataFrame,
+                         order: list[str], h: int = 5, min_n: int = 10) -> dict[str, float]:
+    """各因子的【增量 RankIC】（正交残差的 IC）：组合中每个因子新贡献了多少信息。"""
+    ortho, keys = orthogonalize(panels, order)
+    out = {}
+    for k in keys:
+        ics = daily_ic_series(ortho[k], close_adj, h, min_n).dropna()
+        out[k] = float(ics.mean()) if len(ics) else float("nan")
+    return out

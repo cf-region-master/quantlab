@@ -1327,7 +1327,13 @@ def _rolling_weighted_panel(sig, market, start=None, end=None) -> pd.DataFrame:
         scoped, _ = _apply_pool(v, f_pool, market)
         panels[fid] = apply_preprocess_spec(scoped, spec)
 
-    if sig.model_type == "ic_meanvar":
+    if sig.model_type == "ortho_ic_weight_rolling":
+        # Schmidt 正交化：按分量顺序（越靠前越保留原始信息），每个因子只保留
+        # 前面解释不掉的增量；随后对【正交残差】做滚动 ICIR 加权 —— 权重衡量
+        # 的是"增量信息"的贡献，而不是重复计价的相关信息。
+        from ..factors.combine import orthogonalize
+        panels, order = orthogonalize(panels, list(panels.keys()))  # 分量顺序=信息优先级
+    if sig.model_type in ("ic_meanvar", "ortho_ic_weight_rolling"):
         wmat = rolling_ic_meanvar_weights(panels, market.close_adj, h=h, window=window,
                                           min_periods=min_periods, ridge=ridge)
     else:
@@ -1378,7 +1384,7 @@ def signal_panel(sig: Signal, market, start=None, end=None) -> pd.DataFrame:
         panel.columns.name = "code"
         return panel.loc[(panel.index >= start) & (panel.index <= end)]
 
-    if sig.model_type in ("ic_weight_rolling", "ic_meanvar"):
+    if sig.model_type in ("ic_weight_rolling", "ic_meanvar", "ortho_ic_weight_rolling"):
         return _rolling_weighted_panel(sig, market, start, end)
 
     if sig.model_type in ("linear", "tree"):

@@ -128,3 +128,38 @@
 `tests/test_combine.py` 6 项：池化相关恒等、贪心去冗余剔除克隆、**无前视性质**
 （截断数据重算，历史权重逐位一致）、Σ 对角闭式解方向、增益符号翻转提示、常数
 因子 IC 记缺失。全量 **63 项测试通过**。
+
+
+## feature/debug-upgrade-innovation · 第四批（2026-09-27）：IC 衰减/半衰期、行业中性、波动率目标、正交化合成、对照实验自动化
+
+1. **Newey-West HAC 显著性修正**（重叠标签纪律）：`newey_west_tstat`（Bartlett 核，
+   lag=h-1）；ic_summary 并列 t_stat / t_stat_nw；组合报告重算组合 IC 的 NW t；
+   因子详情页与信号详情页展示。测试：重叠标签构造下 NW 收缩虚高 t、IID 时与普通 t 一致。
+2. **IC 衰减曲线与半衰期**：`factors/decay.py` + `/api/factors/{id}/decay` + 因子详情页
+   折线图；实测 mom20 最优 h=2、半衰期 10 个交易日（调仓频率量化依据，与 E1 对照互证）。
+3. **组合层行业中性**：回测可选开关，申万 PIT 逐日标签 + 单行业上限
+   ceil(top_n/10)；「未知」组同样受限；毛/净同口径。
+4. **组合层波动率目标**（只降不升）：vol_target/vol_window，缩放系数
+   min(1, vt/realized)；升仓需融资而引擎未建模融资（文档化取舍）；
+   高波动市场实测波动显著压低。
+5. **Schmidt 正交化合成 `ortho_ic_weight_rolling`**：按分量顺序保留原始信息、
+   后续因子只留增量残差；对正交残差做滚动 ICIR —— 权重衡量增量信息贡献。
+6. **组合方式对照实验自动化**：`scripts/compare_combinations.py` + `lab/comparison.py`
+   —— 同因子集只改组合模型，输出 RankIC/普通 t/NW t 对照表并落盘 JSON。
+
+### 对照实验实测（mom20/rev5/lowvol20，h=5，601 交易日）
+
+| 模型 | RankIC | t(普通) | t(NW) |
+|---|---|---|---|
+| equal_weight | +0.0255 | 2.67 | 1.55 |
+| ic_weight（全样本权重） | **-0.0208** | -2.30 | -1.28 |
+| ic_weight_rolling | +0.0192 | 1.96 | 1.09 |
+| ic_meanvar | +0.0202 | 2.10 | 1.17 |
+| ortho_ic_weight_rolling | +0.0245 | 2.58 | 1.46 |
+
+发现：ic_weight 全样本权重被动量的负 IC 主导把组合做成负——**全样本加权的
+样本内偏误的活例证**（本仓库已如实标注并推荐 walk-forward 变体）。
+
+### 测试
+70 → **71 项全部通过**（新增 NW 3 项、行业中性 2 项、波动率目标 1 项、
+组合器 7 项中的部分已在第三批计入）。

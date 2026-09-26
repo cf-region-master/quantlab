@@ -93,6 +93,24 @@ flowchart LR
 | `quantlab/api/` | Web 四模块页面 + JSON API（202+轮询） | 见 `/docs`（OpenAPI） | 不做计算（重计算在核心库） |
 | `scripts/` | 数据获取、流水线入口、报告入口 | `fetch_data_tushare.py`、`run_pipeline.py`、`build_report.py` | — |
 
+## 2.5 因子 → 信号的组合方式（怎么更好地组合）
+
+| 模型 | 权重来源 | 前视纪律 | 适用 |
+|---|---|---|---|
+| `equal_weight` | 等权 | 无信息使用 | 基线 |
+| `ic_weight` | 全样本 RankIC 均值 | ⚠️ 轻微样本内偏误（权重看过全样本），仅作基线 | 快速参考 |
+| `ic_weight_rolling` | 滚动 ICIR：w(t) ∝ mean(IC[·<t-h])/std(IC[·<t-h]) | ✅ IC 序列 shift(h)，t 日只用 t-h 前信息 | **推荐** |
+| `ic_meanvar` | IC 均值-方差凸组合 w ∝ (Σ+λI)⁻¹μ（滚动，同样 shift(h)） | ✅ | **推荐**：分散化收益进权重 |
+| `ortho_ic_weight_rolling` | 分量顺序 Schmidt 正交化 → 残差滚动 ICIR | ✅ | 因子高度相关时消除重复计价 |
+| `linear` / `tree` / `gbdt` | walk-forward 截面回归（训练窗截止 r−h−purge） | ✅ 全部样本外预测 | 非线性交互 |
+
+**组合前体检**：`GET /api/factors/correlation?ids=…` 给出池化相关矩阵与去冗余建议
+（|ρ|≥0.8 按 |RankIC| 贪心剔除）；signals/new 页选中因子自动渲染热力图。
+**组合增益**：信号详情页展示组合 vs 最强单因子的同口径 RankIC 对照、分量相关性摘要、
+Newey-West 修正 t（重叠标签纪律）；组合"翻正"时如实提示增益比例不适用。
+**一键对照实验**：`python scripts/compare_combinations.py --factors 1,2,3 --start … --end …`
+同因子集只改组合模型，输出 RankIC/普通 t/NW t 对照表并落盘 JSON。
+
 ## 3. 关键口径（正确性）
 
 - **复权**：乘法累计因子，`P_adj(t) = P_raw(t) × a(t)/a(τ)`，τ=样本首日；原始价与因子分别保存，不拼接不同参考日片段。
