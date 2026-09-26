@@ -413,3 +413,39 @@ def test_norm_pool_id_string_keys():
     assert norm_pool_id("2") == 2
     got = norm_pool_id("index_csi300")
     assert got is not None and int(got) > 0
+
+
+# ---------------- Newey-West HAC 显著性（重叠标签纪律） ----------------
+def test_newey_west_shrinks_inflated_t():
+    """重叠标签构造的自相关序列：普通 t 虚高，NW 修正后 |t| 应显著缩小。"""
+    from quantlab.factors.diagnostics import newey_west_tstat
+    rng = np.random.default_rng(7)
+    shocks = rng.normal(0.02, 1.0, 800)          # 日度真 alpha=0.02
+    # 5 日重叠标签：y(t)=Σ_{i=0..4} shock(t+i) —— 相邻两天共享 4 个 shock
+    x = pd.Series(np.convolve(shocks, np.ones(5), mode="valid"))
+    t_naive = float(x.mean() / (x.std(ddof=1) / np.sqrt(len(x))))
+    t_nw = newey_west_tstat(x, lag=4)
+    assert abs(t_naive) > abs(t_nw) > 0          # NW 应收缩虚高的显著性
+    assert np.isfinite(t_nw)
+
+
+def test_newey_west_matches_naive_on_iid():
+    """无自相关（IID）时 NW 与普通 t 应几乎一致（Bartlett 权重下协方差≈0）。"""
+    from quantlab.factors.diagnostics import newey_west_tstat
+    rng = np.random.default_rng(3)
+    x = pd.Series(rng.normal(0.5, 1.0, 2000))
+    t_naive = float(x.mean() / (x.std(ddof=1) / np.sqrt(len(x))))
+    t_nw = newey_west_tstat(x, lag=4)
+    # IID 下 NW 与普通 t 的【相对】差应很小（绝对差会随均值大小放大）
+    assert abs(t_nw - t_naive) / max(1.0, abs(t_naive)) < 0.15
+
+
+def test_ic_summary_includes_nw():
+    idx = pd.bdate_range("2024-01-01", periods=40)
+    rng = np.random.default_rng(2)
+    tbl = pd.DataFrame({"ic": rng.normal(0.03, 0.1, 40),
+                        "rank_ic": rng.normal(0.03, 0.1, 40),
+                        "n_valid": [30] * 40, "coverage": [0.9] * 40}, index=idx)
+    s = ic_summary(tbl, nw_lag=4)
+    assert s["nw_lag"] == 4 and s["ic"]["t_stat_nw"] is not None
+    assert np.isfinite(s["ic"]["t_stat_nw"])

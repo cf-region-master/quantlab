@@ -65,8 +65,38 @@ def ic_table(factor: pd.DataFrame, y: pd.DataFrame, min_n: int,
     return pd.DataFrame(rows).set_index("date")
 
 
-def ic_summary(table: pd.DataFrame) -> dict[str, Any]:
-    """IC 时间序列的均值/标准差/ICIR/t 统计量（描述性）。"""
+def newey_west_tstat(series: pd.Series, lag: int) -> float:
+    """Newey-West HAC 修正的 t 统计量（Bartlett 核）。
+
+    动机：h 期标签的 IC 序列天然自相关（相邻两天的标签共享 t+1..t+h 的价格），
+    普通 t 检验低估标准误、显著性虚高。课程材料明确要求"重叠标签会影响显著性
+    判断"—— 本函数给出 Honest 版本：lag 取 h-1（相邻 IC 的标签重叠天数）。
+    """
+    x = pd.Series(series).dropna().to_numpy(dtype="float64")
+    n = len(x)
+    if n < 5:
+        return float("nan")
+    mu = float(x.mean())
+    e = x - mu
+    s0 = float((e * e).sum()) / n
+    var = s0
+    L = min(int(lag), n - 1)
+    for l in range(1, L + 1):
+        w = 1.0 - l / (L + 1.0)
+        cov_l = float((e[l:] * e[:-l]).sum()) / n
+        var += 2.0 * w * cov_l
+    if var <= 0:
+        return float("nan")
+    se = float(np.sqrt(var / n))
+    return mu / se if se > 0 else float("nan")
+
+
+def ic_summary(table: pd.DataFrame, nw_lag: int | None = None) -> dict[str, Any]:
+    """IC 时间序列的均值/标准差/ICIR/t 统计量（描述性）。
+
+    nw_lag：Newey-West 修正的最大滞后（传入 h-1 或 h 可修正重叠标签的自相关）。
+    给出 t_stat（普通）与 t_stat_nw（HAC 修正）两个口径，诚实并列。
+    """
     out = {}
     for col in ("ic", "rank_ic"):
         s = table[col].dropna()
@@ -78,9 +108,12 @@ def ic_summary(table: pd.DataFrame) -> dict[str, Any]:
             "t_stat": float(s.mean() / (s.std(ddof=1) / np.sqrt(n))) if n > 2 else np.nan,
             "icir": float(s.mean() / s.std(ddof=1)) if n > 1 and s.std(ddof=1) > 0 else np.nan,
             "win_rate": float((s > 0).mean()) if n else np.nan,
+            "t_stat_nw": (newey_west_tstat(s, nw_lag)
+                          if nw_lag and n > 2 else None),
         }
     out["coverage_mean"] = float(table["coverage"].mean())
     out["n_valid_mean"] = float(table["n_valid"].mean())
+    out["nw_lag"] = nw_lag
     return out
 
 
@@ -162,7 +195,7 @@ def run_diagnostics(factor_values: pd.DataFrame, close_adj: pd.DataFrame,
             "ic_method": ic_method,
             "quantile_groups": k,
             "ic_table": table,
-            "ic_summary": ic_summary(table),
+            "ic_summary": ic_summary(table, nw_lag=max(1, int(h) - 1)),
             "quantile_summary": qt["summary"],
             "quantile_daily": qt["daily"],
         }
@@ -288,7 +321,7 @@ def run_diagnostics_fast(factor_values: pd.DataFrame, close_adj: pd.DataFrame,
         results[str(h)] = {
             "horizon": int(h),
             "ic_table": table,
-            "ic_summary": ic_summary(table),
+            "ic_summary": ic_summary(table, nw_lag=max(1, int(h) - 1)),
             "quantile_summary": qt["summary"],
             "quantile_daily": qt["daily"],
         }
