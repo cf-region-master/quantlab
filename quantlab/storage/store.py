@@ -1616,6 +1616,7 @@ def run_backtest_for_signal(*, signal_id: int, start_date, end_date,
     bt_cfg["portfolio"] = {**bt_cfg["portfolio"], "top_n": int(top_n), "weighting": weighting}
     bt_cfg["cost"] = {**bt_cfg["cost"], **(cost_override or {})}
     bt_cfg["sample"] = {"start": str(start.date()), "end": str(end.date())}
+    bt_cfg["trading_days_per_year"] = int(cfg.data["trading_days_per_year"])
 
     # 行业中性（可选）：申万 PIT 行业标签 + 单行业持仓上限 = ceil(top_n / 10)（文档化口径）
     industry_labels = None

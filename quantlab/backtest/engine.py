@@ -185,6 +185,12 @@ def run_backtest(signal: pd.DataFrame, market, bt_cfg: dict, name: str = "bt",
     max_per_industry = port.get("max_per_industry")
     weighting = str(port.get("weighting", "equal_weight"))
     exposure = float(port.get("target_exposure", 0.98))
+    # 波动率目标（可选，只降不升）：vt 为年化目标波动；每个调仓日用过去 vol_window
+    # 个交易日的已实现年化波动估计缩放仓位（缩放系数 = min(1, vt/realized)）。
+    # 只降不升的原因：升仓需要融资杠杆，而引擎约束「现金非负」，未建模融资。
+    vol_target = port.get("vol_target")
+    vol_window = max(20, int(port.get("vol_window", 60)))
+    vol_max_scale_down = 0.05  # 最低降到基准仓位的 5%，避免完全空仓失去信号意义
     lot = int(port.get("lot_size", 100) or 0)
     freq = bt_cfg["rebalance"]["freq"]
     h = bt_cfg["rebalance"].get("h")
@@ -212,6 +218,7 @@ def run_backtest(signal: pd.DataFrame, market, bt_cfg: dict, name: str = "bt",
     last_close: dict[str, float] = {}
     nav_rows, trades, events, hold_rows = [], [], [], []
     turnover_rows, cost_rows, rebalance_rows = [], [], []
+    vt_state = {"last_scale": None}
 
     def mark_to_market(d) -> float:
         v = cash
@@ -239,7 +246,19 @@ def run_backtest(signal: pd.DataFrame, market, bt_cfg: dict, name: str = "bt",
                                    industry_row=ind_row,
                                    max_per_industry=max_per_industry)
                         if t in signal.index else [])
-            w = target_weights(selected, signal.loc[t], weighting, exposure) if selected else {}
+            exposure_i = exposure
+            if vol_target is not None and i >= 2:
+                hist_nav = pd.Series([r["nav"] for r in nav_rows[-vol_window:]],
+                                     index=[r["date"] for r in nav_rows[-vol_window:]])
+                if len(hist_nav) >= max(10, vol_window // 3):
+                    r_hist = hist_nav / hist_nav.shift(1) - 1
+                    realized = float(r_hist.std(ddof=1) * np.sqrt(
+                        float(bt_cfg.get("trading_days_per_year") or 243)))
+                    if realized > 0:
+                        scale = max(vol_max_scale_down, min(1.0, float(vol_target) / realized))
+                        exposure_i = exposure * scale
+                        vt_state["last_scale"] = round(scale, 4)
+            w = target_weights(selected, signal.loc[t], weighting, exposure_i) if selected else {}
             rebalance_rows.append({"formation_date": str(t.date()),
                                    "exec_date": str(exec_day.date()),
                                    "targets": list(selected),

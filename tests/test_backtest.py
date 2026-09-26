@@ -199,3 +199,32 @@ def test_run_backtest_industry_neutral_flags(tiny_market, bt_cfg):
     res = run_backtest(sig, tiny_market, bt_cfg, name="ind")
     assert res.config["portfolio"]["max_per_industry"] == 1
     assert res.config["portfolio"]["top_n"] == 2
+
+
+# ---------------- 波动率目标（只降不升） ----------------
+def test_vol_target_reduces_realized_vol(tiny_market, bt_cfg):
+    """高波动市场 + 低波动目标：开启后已实现波动应低于未开启，且向目标靠拢。"""
+    # 放大市场波动（把 TinyMarket 的日收益放大 8 倍 → 年化波动极高）
+    scale = 8.0
+    base = tiny_market.close_adj
+    noisy = base.iloc[0] * (1 + (base / base.shift(1) - 1).fillna(0) * scale).cumprod()
+    tiny_market.close_adj = noisy
+    tiny_market.open_adj = tiny_market.open_adj.iloc[0] * noisy / noisy.iloc[0]
+    tiny_market.high_adj = tiny_market.high_adj.iloc[0] * noisy / noisy.iloc[0]
+    tiny_market.low_adj = tiny_market.low_adj.iloc[0] * noisy / noisy.iloc[0]
+    tiny_market.suspended = tiny_market.volume <= 0
+
+    sig = _signal_flat(tiny_market)
+    bt_cfg["trading_days_per_year"] = 243
+    plain = run_backtest(sig, tiny_market, bt_cfg, name="plain")
+
+    vt_cfg = {**bt_cfg, "portfolio": {**bt_cfg["portfolio"], "vol_target": 0.10,
+                                      "vol_window": 30}}
+    vt = run_backtest(sig, tiny_market, vt_cfg, name="vt")
+    A = 243
+    vol_plain = float((plain.nav / plain.nav.shift(1) - 1).std(ddof=1) * np.sqrt(A))
+    vol_vt = float((vt.nav / vt.nav.shift(1) - 1).std(ddof=1) * np.sqrt(A))
+    assert vol_vt < vol_plain                     # 波动被压低
+    assert vol_vt < vol_plain * 0.9               # 压低幅度显著
+    # 仓位缩放留痕
+    assert vt.config["portfolio"]["vol_target"] == 0.10
