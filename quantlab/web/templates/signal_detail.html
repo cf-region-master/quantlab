@@ -64,6 +64,23 @@ fetch('/api/signals/{{ sig.id }}/similarity').then(r=>r.json()).then(j=>{
 }).catch(e=>{ document.getElementById('simHint').textContent = '相似度计算失败：'+e; });
 </script>
 
+{% if weight_matrix and not weight_matrix.error %}
+<h2>因子权重随时间变化（walk-forward）</h2>
+<div id="wChart" class="chart" style="height:300px;"></div>
+<div class="muted" style="margin-top:6px;">每列一条堆叠带；权重在日期 t 只使用 t−h 之前的 IC 信息（无前视）。</div>
+<script>
+const WM = {{ weight_matrix|tojson }};
+const wc = echarts.init(document.getElementById('wChart'));
+const wCols = WM.columns.map((c,i)=>({name:'因子#'+c, type:'line', stack:'w',
+  areaStyle:{opacity:0.6}, symbol:'none',
+  data: WM.series.map(row=>row[i]==null?null:Math.round(row[i]*10000)/10000)}));
+wc.setOption({title:{text:'滚动权重（归一化，Σ|w|=1）', textStyle:{fontSize:13}},
+  tooltip:{trigger:'axis'}, legend:{type:'scroll', top:24},
+  xAxis:{type:'category', data:WM.index},
+  yAxis:{type:'value', max:1}, series:wCols});
+</script>
+{% endif %}
+
 <h2>信号诊断</h2>
 {% if diag and not diag.error %}
 <div class="toolbar" style="margin-bottom:10px;">

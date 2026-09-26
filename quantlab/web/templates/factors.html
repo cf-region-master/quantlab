@@ -53,6 +53,7 @@
     <th class="sortable" data-k="name" data-t="str">名称</th>
     <th class="sortable" data-k="source" data-t="str">来源</th>
     <th data-k="expr" style="cursor:default;">公式 / 表达式</th>
+    <th class="num sortable" data-k="ric60" data-t="num">近60日 RankIC</th>
     <th class="num sortable" data-k="ric5" data-t="num">RankIC(5d)</th>
     <th class="num sortable" data-k="ric20" data-t="num">RankIC(20d)</th>
     <th class="num sortable" data-k="icir" data-t="num">ICIR(20d)</th>
@@ -72,6 +73,7 @@
       data-id="{{ r.f.id }}" data-name="{{ r.f.name }}" data-source="{{ r.f.source }}"
       data-expr="{{ r.f.expression|e }}"
       data-ric5="{{ v5 if v5 is not none else '' }}"
+      data-ric60="{{ '%.4f'|format(r.recent.mean) if r.recent and r.recent.mean is not none else '' }}"
       data-ric20="{{ v20 if v20 is not none else '' }}"
       data-icir="{{ r.m20.icir if r.m20 and r.m20.icir is not none else '' }}"
       data-cover="{{ r.m20.coverage_mean if r.m20 and r.m20.coverage_mean is not none else '' }}"
@@ -84,6 +86,11 @@
     <td><span class="badge {{ r.f.source }}">{{ r.f.source }}</span>
       {% if r.f.hidden %}<span class="tag">隐藏</span>{% endif %}</td>
     <td class="mono">{{ r.f.expression[:52] }}</td>
+    <td class="num">{% if r.recent and r.recent.mean is not none %}
+      {%- set ratio = (r.recent.mean / r.recent.full_mean) if (r.recent.full_mean and r.recent.full_mean != 0 and r.recent.full_mean|abs > 0.002) else none -%}
+      <span class="{{ 'pos' if r.recent.mean > 0 else 'neg' }}">{{ '%+.4f'|format(r.recent.mean) }}</span>
+      {% if ratio is not none %}<span class="muted" style="font-size:11px;">({{ '%.0f%%'|format(ratio*100) }})</span>{% endif %}
+    {% else %}—{% endif %}</td>
     <td class="num" style="{% if v5 is not none %}background:rgba({{ '19,122,58' if v5>0 else '179,38,30' }},{{ [0.05 + (v5|abs)*9, 0.30]|min }}){% endif %}">
       {{ '%+.4f'|format(v5) if v5 is not none else '—' }}</td>
     <td class="num" style="{% if v20 is not none %}background:rgba({{ '19,122,58' if v20>0 else '179,38,30' }},{{ [0.05 + (v20|abs)*9, 0.30]|min }}){% endif %}">

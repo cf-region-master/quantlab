@@ -1419,7 +1419,25 @@ def _rolling_weighted_panel(sig, market, start=None, end=None) -> pd.DataFrame:
     panel = apply_weights(panels, wmat)
     lo = pd.Timestamp(start) if start is not None else pd.Timestamp(sig.start_date)
     hi = pd.Timestamp(end) if end is not None else pd.Timestamp(sig.end_date)
-    return panel.loc[(panel.index >= lo) & (panel.index <= hi)]
+    # 权重矩阵随面板裁剪后挂到 attrs —— 信号详情页渲染"权重随时间变化"堆叠图
+    panel = panel.loc[(panel.index >= lo) & (panel.index <= hi)]
+    panel.attrs["weights"] = wmat.reindex(panel.index).ffill()
+    return panel
+
+
+def signal_weight_matrix(sig_id: int) -> pd.DataFrame | None:
+    """walk-forward 权重类信号的权重矩阵（date × factor）；非该类信号返回 None。"""
+    s = get_session()
+    try:
+        sig = s.get(Signal, sig_id)
+        if sig is None or sig.model_type not in ("ic_weight_rolling", "ic_meanvar",
+                                                 "ortho_ic_weight_rolling"):
+            return None
+    finally:
+        s.close()
+    mk = market()
+    panel = _rolling_weighted_panel(sig, mk, sig.start_date, sig.end_date)
+    return panel.attrs.get("weights")
 
 
 def signal_panel(sig: Signal, market, start=None, end=None) -> pd.DataFrame:

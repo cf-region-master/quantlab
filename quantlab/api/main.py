@@ -192,7 +192,20 @@ def page_factors(request: Request, show_hidden: int = 0):
         rows = []
         for f in factors:
             mm = by_factor.get(f.id, {})
-            rows.append({"f": f, "m5": mm.get(5), "m20": mm.get(20)})
+            # 近期 IC 监控：h=20（或最接近的可用 horizon）最近 60 个观测的 RankIC 均值
+            recent = None
+            hs_avail = sorted(mm)
+            if hs_avail:
+                h_pick = 20 if 20 in mm else hs_avail[-1]
+                series = ((mm[h_pick].summary_json or {}).get(str(h_pick), {})
+                          .get("ic_series") or {}).get("rank_ic") or []
+                tail = [v for v in series[-60:] if v is not None]
+                full = [v for v in series if v is not None]
+                if tail:
+                    recent = {"mean": float(np.mean(tail)),
+                              "n": len(tail), "horizon": h_pick,
+                              "full_mean": (float(np.mean(full)) if full else None)}
+            rows.append({"f": f, "m5": mm.get(5), "m20": mm.get(20), "recent": recent})
     finally:
         s.close()
     mk = store.market()
@@ -308,8 +321,22 @@ def page_signal_detail(request: Request, sid: int):
         gain_report = store.combination_report(sid)
     except Exception as e:  # noqa: BLE001 —— 组合报告失败不影响详情页
         gain_report = {"error": f"{type(e).__name__}: {e}"}
+    # 权重随时间变化（walk-forward 权重类信号的可解释性核心）
+    weight_matrix = None
+    try:
+        w = store.signal_weight_matrix(sid)
+        if w is not None and len(w.index) > 0:
+            step = max(1, len(w) // 300)
+            w = w.iloc[::step]
+            weight_matrix = {"index": [str(d) for d in w.index],
+                             "columns": list(w.columns),
+                             "series": [[None if not np.isfinite(x) else round(float(x), 4)
+                                         for x in row] for row in w.to_numpy()]}
+    except Exception as e:  # noqa: BLE001
+        weight_matrix = {"error": f"{type(e).__name__}: {e}"}
     return templates.TemplateResponse(request, "signal_detail.html", {
         "sig": sig, "fac_names": fac_names, "diag": diag, "gain_report": gain_report,
+        "weight_matrix": weight_matrix,
         "backtests": store.list_backtests(signal_id=sid),
         "pools": store.list_pools(),
         "factor_ids": [c["factor_id"] for c in (sig.get("components") or [])],
