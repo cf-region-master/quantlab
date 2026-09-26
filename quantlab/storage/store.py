@@ -1777,6 +1777,47 @@ def run_backtest_for_signal(*, signal_id: int, start_date, end_date,
         s.close()
 
 
+def compare_backtests(a_id: int, b_id: int) -> dict:
+    """两条回测的并排对照：共同交易日对齐净值 + 指标并排 + 配置差异摘要。"""
+    a, b = backtest_result(a_id), backtest_result(b_id)
+    if a is None or b is None:
+        raise ValueError(f"回测记录不存在: a={a_id} b={b_id}")
+    na = pd.Series(a["nav"]["values"], index=pd.to_datetime(a["nav"]["index"]))
+    nb = pd.Series(b["nav"]["values"], index=pd.to_datetime(b["nav"]["index"]))
+    joined = pd.concat({"A": na, "B": nb}, axis=1, join="inner").dropna()
+    diff_rows = []
+    ca, cb = a.get("config") or {}, b.get("config") or {}
+    for section in ("signal", "rebalance", "portfolio", "cost", "sample"):
+        sa, sb = ca.get(section) or {}, cb.get(section) or {}
+        for k in sorted(set(sa) | set(sb)):
+            if k.startswith("_"):
+                continue
+            if sa.get(k) != sb.get(k):
+                diff_rows.append({"section": section, "key": k,
+                                  "a": sa.get(k), "b": sb.get(k)})
+    metrics_rows = []
+    for grp, keys in (("net", ("cumulative_return", "annualized_return", "annualized_vol",
+                               "annualized_sharpe", "max_drawdown")),):
+        for k in keys:
+            va = (a.get("metrics") or {}).get(grp, {}).get(k)
+            vb = (b.get("metrics") or {}).get(grp, {}).get(k)
+            metrics_rows.append({"metric": k, "a": va, "b": vb})
+    return {
+        "a": {"id": a_id, "name": a.get("name"), "signal_id": a.get("signal_id"),
+              "metrics": a.get("metrics"), "checks_all_pass":
+                  (a.get("checks") or {}).get("all_pass")},
+        "b": {"id": b_id, "name": b.get("name"), "signal_id": b.get("signal_id"),
+              "metrics": b.get("metrics"), "checks_all_pass":
+                  (b.get("checks") or {}).get("all_pass")},
+        "aligned": {"index": [str(d.date()) for d in joined.index],
+                    "A": [float(v) for v in joined["A"]],
+                    "B": [float(v) for v in joined["B"]]},
+        "n_common_days": int(len(joined)),
+        "metrics_rows": metrics_rows,
+        "config_diff": diff_rows,
+    }
+
+
 def backtest_result(run_id: int) -> dict | None:
     p = RESULTS_DIR / f"bt{run_id}.json"
     return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
