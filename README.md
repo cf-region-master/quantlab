@@ -50,6 +50,9 @@ python scripts/compare_combinations.py --factors 1,2,3 --start 2023-01-01 --end 
 
 # 7) 测试（数据完整性 / 因子正确性 / 回测门禁 / 复现 / 分段防泄漏 / 沙箱 / 组合器）
 python -m pytest tests/ -q
+
+# 8) 全页面稳定性巡检（可选，需 Web 服务已启动）
+python scripts/check_pages.py --base http://127.0.0.1:8001
 ```
 
 **改抓取区间是安全的**：跳过逻辑按「上次拉的区间是否覆盖本次请求区间」判断（而不是"文件存在就跳过"），
@@ -107,6 +110,9 @@ flowchart LR
 | `ic_meanvar` | IC 均值-方差凸组合 w ∝ (Σ+λI)⁻¹μ（滚动，同样 shift(h)） | ✅ | **推荐**：分散化收益进权重 |
 | `ortho_ic_weight_rolling` | 分量顺序 Schmidt 正交化 → 残差滚动 ICIR | ✅ | 因子高度相关时消除重复计价 |
 | `linear` / `tree` / `gbdt` | walk-forward 截面回归（训练窗截止 r−h−purge） | ✅ 全部样本外预测 | 非线性交互 |
+| `ic_weight_rolling` | 滚动 ICIR：w(t) ∝ mean(IC[·<t−h]) / std(IC[·<t−h])，IC 序列 shift(h) 屏蔽前视 | ✅ | **推荐** |
+| `ic_meanvar` | IC 均值-方差凸组合 w ∝ (Σ+λI)⁻¹μ（同样 shift(h)） | ✅ | **推荐**：分散化收益进权重 |
+| `ortho_ic_weight_rolling` | 分量顺序 Schmidt 正交化 → 残差滚动 ICIR | ✅ | 因子高度相关时消除重复计价 |
 
 **组合前体检**：`GET /api/factors/correlation?ids=…` 给出池化相关矩阵与去冗余建议
 （|ρ|≥0.8 按 |RankIC| 贪心剔除）；signals/new 页选中因子自动渲染热力图。
