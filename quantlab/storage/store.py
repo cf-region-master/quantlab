@@ -1608,6 +1608,8 @@ def run_backtest_for_signal(*, signal_id: int, start_date, end_date,
                             initial_cash: float | None = None,
                             cost_override: dict | None = None,
                             industry_neutral: bool = False,
+                            vol_target: float | None = None,
+                            vol_window: int = 60,
                             name: str = "") -> dict:
     """对信号在指定配置下执行一次模拟成交，落库为 BacktestRun。"""
     from ..backtest.checks import finalize_checks, run_checks
@@ -1652,6 +1654,9 @@ def run_backtest_for_signal(*, signal_id: int, start_date, end_date,
         industry_labels = _industry_labels(mk.dates, mk.codes)
         bt_cfg["portfolio"]["max_per_industry"] = max(1, int(np.ceil(int(top_n) / 10)))
         bt_cfg["portfolio"]["industry_neutral"] = True
+    if vol_target is not None and float(vol_target) > 0:
+        bt_cfg["portfolio"]["vol_target"] = float(vol_target)
+        bt_cfg["portfolio"]["vol_window"] = max(20, int(vol_window))
 
     net = run_backtest(panel, mk, bt_cfg, name=name or f"signal{signal_id}", pool_mask=pool_mask,
                        industry_labels=industry_labels)

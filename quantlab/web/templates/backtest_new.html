@@ -63,6 +63,18 @@
       <span class="muted">启用后每行业最多 ceil(top_n/10) 只（申万 PIT 行业；无标签资产计入“未知”组同样受限）</span>
     </label></div>
   </div>
+  <div class="kv" style="margin:12px 0;">
+    <div class="k">波动率目标（可选，只降不升）</div>
+    <div class="flex">
+      <label class="flex" style="gap:6px;"><input type="checkbox" name="vol_target_enabled" value="true" style="width:auto">
+      <span class="muted">启用</span></label>
+      <span class="muted">年化目标</span>
+      <input type="number" name="vol_target" value="0.15" step="0.01" min="0.02" max="1.0" style="width:90px">
+      <span class="muted">观察窗口(日)</span>
+      <input type="number" name="vol_window" value="60" step="10" min="20" max="252" style="width:90px">
+    </div>
+    <div class="n">每个调仓日按 min(1, 目标/已实现) 缩放基准仓位（不做融资升仓，文档化取舍）</div>
+  </div>
 <button class="btn" type="submit">运行回测</button>
     <a class="btn ghost" href="/backtests">取消</a>
     <span class="muted" style="font-size:12.5px;">
