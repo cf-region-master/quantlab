@@ -322,6 +322,13 @@ def page_signal_detail(request: Request, sid: int):
     except Exception as e:  # noqa: BLE001 —— 组合报告失败不影响详情页
         gain_report = {"error": f"{type(e).__name__}: {e}"}
     # 权重随时间变化（walk-forward 权重类信号的可解释性核心）
+    best_h = None
+    try:
+        bh = store.signal_best_horizon(sid)
+        best_h = {"best_h": bh.get("best_h"), "half_life": bh.get("half_life"),
+                  "curve": bh.get("curve")}
+    except Exception:  # noqa: BLE001
+        best_h = None
     weight_matrix = None
     try:
         latest_weights = store.signal_latest_weights(sid)
@@ -341,6 +348,7 @@ def page_signal_detail(request: Request, sid: int):
     return templates.TemplateResponse(request, "signal_detail.html", {
         "sig": sig, "fac_names": fac_names, "diag": diag, "gain_report": gain_report,
         "weight_matrix": weight_matrix, "latest_weights": latest_weights,
+        "best_h": best_h,
         "backtests": store.list_backtests(signal_id=sid),
         "pools": store.list_pools(),
         "factor_ids": [c["factor_id"] for c in (sig.get("components") or [])],
@@ -1140,6 +1148,11 @@ def api_signal_rebalance_hint(signal_id: int):
 def api_signal_similarity_matrix():
     """全部信号两两相关矩阵（组合前查重）。"""
     return store.signal_similarity_matrix()
+
+
+@app.get("/api/signals/{signal_id}/best-horizon")
+def api_signal_best_horizon_route(signal_id: int):
+    return store.signal_best_horizon(signal_id)
 
 
 @app.get("/api/signals/{signal_id}/similarity")

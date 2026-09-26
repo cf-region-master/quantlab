@@ -1239,6 +1239,29 @@ def factor_correlation(factor_ids: list[int]) -> dict:
             "redundancy": red}
 
 
+def signal_best_horizon(signal_id: int) -> dict:
+    """组合信号的最优持有期建议：对组合面板做多持有期衰减分析。
+
+    闭环逻辑：因子有各自的最优 h（decay 模块），但组合后的信号有自己的衰减
+    结构 —— 回测调仓频率应跟随【组合信号】的最优 h，而不是任一分量的。
+    """
+    from ..factors.decay import full_decay_report
+
+    s = get_session()
+    try:
+        sig = s.get(Signal, signal_id)
+        if sig is None:
+            raise ValueError(f"信号 {signal_id} 不存在")
+    finally:
+        s.close()
+    panel = signal_panel(sig, market())
+    close = market().close_adj.reindex(index=panel.index)   # 与信号面板对齐
+    rep = full_decay_report(panel, close,
+                            horizons=(1, 2, 3, 5, 10, 20, 40), min_n=10)
+    rep["signal_id"] = signal_id
+    return rep
+
+
 def _signal_pnl(sig_dict) -> pd.Series:
     """信号相似度口径的日收益近似：分值面板截面均值（文档化，见 signal_similarity）。"""
     s = get_session()

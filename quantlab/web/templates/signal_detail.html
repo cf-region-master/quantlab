@@ -17,6 +17,11 @@
   <div class="k">因子分量</div>
   <div>{% for c in sig.components %}<a href="/factors/{{ c.factor_id }}">{{ fac_names.get(c.factor_id, c.factor_id) }}</a>{% if not loop.last %} + {% endif %}{% endfor %}</div>
   <div class="k">组合模型</div><div class="mono">{{ sig.model_type }}{% if sig.model_params %} · {{ sig.model_params }}{% endif %}</div>
+  {% if best_h and best_h.best_h %}
+  <div class="k">最优持有期（衰减分析）</div>
+  <div><b>h = {{ best_h.best_h }} 交易日</b>
+    {% if best_h.half_life %}· 半衰期 {{ best_h.half_life }} 日（调仓频率不宜快于它）{% endif %}</div>
+  {% endif %}
   <div class="k">有效区间</div><div class="mono">{{ sig.start_date[:10] }} ~ {{ sig.end_date[:10] }}</div>
   <div class="k">创建时间</div><div class="mono">{{ sig.created_at[:16].replace('T',' ') }}</div>
 </div>
