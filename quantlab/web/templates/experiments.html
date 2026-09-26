@@ -35,7 +35,6 @@
   <table class="grid" style="margin-top:8px;">
     <tr><th>模型</th><th>RankIC 均值</th><th>t(普通)</th><th>t(NW)</th><th>N</th><th>回测(可选)</th></tr>
     {% set nw_best = namespace(key=none, val=none) %}
-    {% set nw_best = namespace(key=none, val=none) %}
     {% for m, v in e.models.items() %}{% set tnw = v.get('t_nw') %}{% set ric = v.get('rank_ic_mean') %}
       {% if tnw is not none and ric is not none and ric > 0 %}
         {% if nw_best.val is none or tnw > nw_best.val %}{% set nw_best.key = m %}{% set nw_best.val = tnw %}{% endif %}
