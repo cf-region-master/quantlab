@@ -9,7 +9,7 @@
     <button class="btn" type="submit" style="margin-top:10px;">对比选中（2~4 条）</button>
   </form>
   <script>
-  (function(){
+document.addEventListener('DOMContentLoaded', function(){
     const boxes = document.getElementById('cmpBoxes');
     document.querySelectorAll("table.grid tbody tr").forEach(tr=>{
       const link = tr.querySelector("a[href*='/backtests/']");
@@ -24,7 +24,7 @@
       lab.innerHTML = `<input type="checkbox" name="ids" value="${m[1]}" style="width:auto"> ${label}`;
       boxes.appendChild(lab);
     });
-  })();
+  });
   </script>
 </div>
   <div>
