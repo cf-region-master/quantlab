@@ -118,6 +118,9 @@ flowchart LR
 （|ρ|≥0.8 按 |RankIC| 贪心剔除）；signals/new 页选中因子自动渲染热力图。
 **组合增益**：信号详情页展示组合 vs 最强单因子的同口径 RankIC 对照、分量相关性摘要、
 Newey-West 修正 t（重叠标签纪律）；组合"翻正"时如实提示增益比例不适用。
+**增量 IC 体检**：`/api/factors/incremental-ic?ids=…` —— Schmidt 正交化分解，
+按选择顺序给出各因子的增量 RankIC（排后面的只保留前面解释不掉的信息），
+signals/new 页相关性区块联动展示。
 **一键对照实验**：`python scripts/compare_combinations.py --factors 1,2,3 --start … --end …`
 同因子集只改组合模型，输出 RankIC/普通 t/NW t 对照表并落盘 JSON。
 
