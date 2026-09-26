@@ -1449,8 +1449,19 @@ def combination_report(signal_id: int, horizon: int | None = None) -> dict:
             if ms:
                 cand = [m for m in ms if m.horizon == h]
                 pick = cand[0] if cand else min(ms, key=lambda m: abs(m.horizon - h))
+            # 分量级 NW t：从存储的逐日 IC 序列重算（重叠标签纪律）
+            tnw = None
+            if pick and pick.summary_json:
+                series = ((pick.summary_json.get(str(pick.horizon), {})
+                           or {}).get("ic_series") or {}).get("rank_ic")
+                if series:
+                    from ..factors.diagnostics import newey_west_tstat
+                    t = newey_west_tstat(pd.Series(series, dtype="float64"),
+                                         lag=max(1, pick.horizon - 1))
+                    tnw = round(t, 3) if np.isfinite(t) else None
             singles[fid] = {"factor_id": fid, "name": f.name,
                             "rank_ic": (pick.rank_ic_mean if pick else None),
+                            "rank_ic_t_nw": tnw,
                             "horizon": (pick.horizon if pick else None)}
             try:
                 panels[fid] = factor_values(fid)
