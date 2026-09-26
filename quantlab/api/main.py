@@ -1050,13 +1050,16 @@ def experiments_csv(filename: str):
 def action_run_experiment(request: Request, factor_ids: str = Form(...),
                           start_date: str = Form(...), end_date: str = Form(...),
                           horizon: int = Form(5),
-                          include_backtest: str = Form("")):
+                          include_backtest: str = Form(""),
+                          rebalances: str = Form("weekly,monthly")):
     id_list = [int(x) for x in factor_ids.split(",") if x.strip()]
     if not 2 <= len(id_list) <= 12:
         raise HTTPException(422, "需选择 2~12 个因子")
     from ..lab.comparison import compare_combinations
+    freqs = [x.strip() for x in rebalances.split(",") if x.strip()] or ["weekly"]
     res = compare_combinations(id_list, start_date, end_date, horizon=horizon,
-                               include_backtest=bool(include_backtest))
+                               include_backtest=bool(include_backtest),
+                               rebalance_freqs=freqs)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     out_dir = ROOT / "reports" / "combination_experiments"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1211,6 +1214,72 @@ def api_signal_similarity_matrix():
 @app.get("/api/signals/{signal_id}/best-horizon")
 def api_signal_best_horizon_route(signal_id: int):
     return store.signal_best_horizon(signal_id)
+
+
+@app.get("/api/signals/{signal_id}/combination-report.pdf")
+def api_combination_report_pdf(signal_id: int):
+    """组合增益报告导出 PDF（复用 report.py 的中文字体设置）。"""
+    from fpdf import FPDF
+    from fpdf.fonts import FontFace
+    import fpdf
+
+    rep = store.combination_report(signal_id)
+    font = next((f for f in ("C:/Windows/Fonts/msyh.ttc", "C:/Windows/Fonts/simhei.ttf",
+                             "C:/Windows/Fonts/simsun.ttc")
+                 if Path(f).exists()), None)
+    pdf = fpdf.FPDF()
+    pdf.set_auto_page_break(True, margin=18)
+    pdf.add_font("cjk", "", font)
+    pdf.add_font("cjk", "B", font)
+    pdf.add_page()
+
+    def body(text, size=9.5, color=(20, 20, 20), lh=5):
+        pdf.set_font("cjk", "", size)
+        pdf.set_text_color(*color)
+        pdf.multi_cell(0, lh, text.replace("**", ""), new_x="LMARGIN", new_y="NEXT")
+        pdf.set_text_color(20)
+
+    pdf.set_font("cjk", "", 15)
+    pdf.set_text_color(20)
+    pdf.multi_cell(0, 8, f"组合增益报告 · 信号 {signal_id}", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(2)
+    body(f"持有期 h = {rep['horizon']} 交易日（RankIC 口径，NW = Newey-West 修正）")
+    pdf.ln(1)
+    body(f"组合信号 RankIC = {rep['combined_rank_ic']}"
+         + (f"（NW 修正 t = {rep['combined_rank_ic_t_nw']}）"
+            if rep.get("combined_rank_ic_t_nw") is not None else ""))
+    pdf.ln(2)
+    pdf.set_font("cjk", "", 10)
+    pdf.cell(0, 6, "各分量对照", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("cjk", "", 8.5)
+    with pdf.table(col_widths=(40, 40, 30, 30, 30), text_align="LEFT",
+                   line_height=4.6, padding=1) as table:
+        hr = table.row()
+        hr.style = FontFace(emphasis="BOLD", fill_color=(238, 242, 247))
+        for c in ("因子", "RankIC", "NW t", "星号", "h"):
+            hr.cell(c)
+        for c in rep["components"]:
+            r = table.row()
+            r.cell(str(c["name"]))
+            r.cell(f"{c['rank_ic']:.4f}" if c["rank_ic"] is not None else "NaN")
+            r.cell(f"{c['rank_ic_t_nw']:.3f}" if c.get("rank_ic_t_nw") is not None else "—")
+            r.cell(str(c.get("rank_ic_t_nw_stars") or ""))
+            r.cell(str(c.get("horizon") or ""))
+    pdf.ln(3)
+    if rep.get("correlation"):
+        corr = rep["correlation"]
+        body(f"分量相关性：min {corr['min']} · max {corr['max']} · 平均|ρ| {corr['mean_abs']}")
+    if rep.get("gain"):
+        g = rep["gain"]
+        body(f"最强单因子：{g.get('best_single_key')} = {g.get('best_single_ic')}")
+        body(f"组合翻正：{'是' if g.get('sign_flip') else '否'} · {g.get('note')}")
+    body("口径：RankIC = Spearman（并列平均秩）；NW = Newey-West HAC 修正 t；均为描述性统计。", size=8, color=(110, 110, 110))
+    out = ROOT / "data" / "store" / f"combination_report_{signal_id}.pdf"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    pdf.output(str(out))
+    from fastapi.responses import FileResponse
+    return FileResponse(str(out), media_type="application/pdf",
+                        filename=f"signal{signal_id}_combination.pdf")
 
 
 @app.get("/api/signals/{signal_id}/combination-report.csv")

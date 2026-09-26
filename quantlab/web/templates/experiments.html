@@ -13,9 +13,11 @@
       <div><label>开始日期</label><input type="date" name="start_date" value="{{ data_start }}" min="{{ data_start }}" max="{{ data_end }}"></div>
       <div><label>结束日期</label><input type="date" name="end_date" value="{{ data_end }}" min="{{ data_start }}" max="{{ data_end }}"></div>
       <div><label>持有期 h（交易日）</label><input type="number" name="horizon" value="5" min="1" max="60"></div>
-      <div style="display:flex; align-items:center; gap:6px; margin-top:18px;">
+      <div style="display:flex; align-items:center; gap:12px; margin-top:18px; flex-wrap:wrap;">
         <label class="flex" style="gap:6px;"><input type="checkbox" name="include_backtest" value="true" style="width:auto">
         <span class="muted">同时对照净值回测（每模型一次，稍慢）</span></label>
+        <label class="muted">调仓频率</label>
+        <input type="text" name="rebalances" value="weekly,monthly" style="width:160px;">
       </div>
     </div>
     <div><button class="btn" type="submit">运行对照实验（同步，秒级）</button></div>
