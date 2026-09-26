@@ -1259,6 +1259,27 @@ def api_runs():
     return store.list_run_summaries()
 
 
+@app.get("/runs/diff", response_class=HTMLResponse)
+def page_runs_diff(request: Request, a: str, b: str):
+    runs = ROOT / "reports" / "runs"
+    ma_p, mb_p = runs / a / "manifest.json", runs / b / "manifest.json"
+    if not ma_p.exists() or not mb_p.exists():
+        raise HTTPException(404, "run 不存在")
+    ma = json.loads(ma_p.read_text(encoding="utf-8"))
+    mb = json.loads(mb_p.read_text(encoding="utf-8"))
+    diffs = []
+    def walk(prefix, x, y):
+        if isinstance(x, dict) and isinstance(y, dict):
+            for k in sorted(set(x) | set(y)):
+                walk(prefix + [str(k)], x.get(k), y.get(k))
+        elif x != y:
+            diffs.append({"path": ".".join(prefix), "a": x, "b": y})
+    walk([], ma, mb)
+    return templates.TemplateResponse(request, "runs_diff.html",
+                                      {"a": a, "b": b, "diffs": diffs,
+                                       "n": len(diffs)})
+
+
 @app.get("/api/runs/diff")
 def api_runs_diff(a: str, b: str):
     """两个 run 的 manifest 差异（配置/环境/数据口径），供复现对照。"""

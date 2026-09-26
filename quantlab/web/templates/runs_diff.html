@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="crumb"><a href="/runs">研究记录</a> / Manifest 差异</div>
+<h1>Run 对比：{{ a }} vs {{ b }}</h1>
+<p class="muted">共 {{ n }} 处差异（仅列出值不同的键；嵌套 dict 以路径展开）。</p>
+<table class="grid">
+  <tr><th>路径</th><th>{{ a }}</th><th>{{ b }}</th></tr>
+  {% for d in diffs %}
+  <tr><td class="mono">{{ d.path }}</td>
+      <td class="mono">{{ d.a }}</td><td class="mono">{{ d.b }}</td></tr>
+  {% endfor %}
+</table>
+<p><a class="btn ghost" href="/runs">← 返回研究记录</a></p>
+{% endblock %}
