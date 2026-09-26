@@ -4,31 +4,29 @@
 
 <div class="card" style="margin:12px 0;">
   <div class="k">回测对比（并排净值与指标）</div>
-  <form method="get" action="/backtests/compare" style="display:flex; gap:10px; align-items:center; margin-top:8px; flex-wrap:wrap;">
-    <label class="muted">A</label>
-    <select name="a" id="cmpA" required style="min-width:220px;"></select>
-    <label class="muted">B</label>
-    <select name="b" id="cmpB" required style="min-width:220px;"></select>
-    <button class="btn" type="submit">对比</button>
+  <form method="get" action="/backtests/compare" id="cmpForm" style="margin-top:8px;">
+    <div id="cmpBoxes" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:6px;"></div>
+    <button class="btn" type="submit" style="margin-top:10px;">对比选中（2~4 条）</button>
   </form>
+  <script>
+  (function(){
+    const boxes = document.getElementById('cmpBoxes');
+    document.querySelectorAll("table.grid tbody tr").forEach(tr=>{
+      const link = tr.querySelector("a[href*='/backtests/']");
+      if (!link) return;
+      const m = link.getAttribute("href").match(/backtests\/(\d+)/);
+      if (!m) return;
+      const tds = tr.querySelectorAll("td");
+      const label = (tds[0] ? tds[0].textContent.trim() : "") + " bt" + m[1] +
+                    (tds[1] ? " · " + tds[1].textContent.trim() : "");
+      const lab = document.createElement('label');
+      lab.style.cssText = 'display:flex;gap:6px;align-items:center;';
+      lab.innerHTML = `<input type="checkbox" name="ids" value="${m[1]}" style="width:auto"> ${label}`;
+      boxes.appendChild(lab);
+    });
+  })();
+  </script>
 </div>
-<script>
-(function(){
-  const rows = document.querySelectorAll("table.grid tbody tr");
-  const A = document.getElementById('cmpA'), B = document.getElementById('cmpB');
-  rows.forEach((tr,idx)=>{
-    const tds = tr.querySelectorAll("td");
-    const idCell = tr.querySelector("a[href*='/backtests/']");
-    if (!idCell) return;
-    const m = idCell.getAttribute("href").match(/backtests\/(\d+)/);
-    if (!m) return;
-    const label = (tds[1] ? tds[1].textContent.trim() : ("#"+m[1])) + " · #" + m[1];
-    A.add(new Option(label, m[1]));
-    B.add(new Option(label, m[1]));
-  });
-  if (A.options.length >= 2) { A.selectedIndex = 0; B.selectedIndex = 1; }
-})();
-</script>
   <div>
     <h1>回测记录</h1>
     <p class="lead">一个信号可对应多条回测记录（区间 / 股票池 / 权重 / 成本各自独立）。</p>

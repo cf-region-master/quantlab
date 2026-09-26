@@ -83,9 +83,8 @@ def compare_combinations(factor_ids: list[int], start: str, end: str,
                     try:
                         bt = _quick_backtest(panel, mk, start, end,
                                              rebalance_freq=fq, pool=pool)
-                        tag = fq if len(freqs) > 1 else ""
                         for k, v in bt.items():
-                            entry[f"bt_{k}" + (f"_{fq}" if tag else "")] = v
+                            entry[f"bt_{k}_{fq}"] = v   # 统一后缀：bt_<k>_<freq>
                     except Exception as e:  # noqa: BLE001
                         entry[f"bt_error_{fq}"] = f"{type(e).__name__}: {e}"
             out[m] = entry

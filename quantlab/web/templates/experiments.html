@@ -48,11 +48,26 @@
           {% set ba = v.get('bt_annualized_return') %}
           {% set bw = v.get('bt_annualized_return_weekly') %}
           {% set bm = v.get('bt_annualized_return_monthly') %}
-          {% if ba is not none %}年化 {{ '%+.2f%%'|format(ba*100) }} · Sharpe {{ '%.2f'|format(v.get('bt_sharpe')) }}{% endif %}
-          {% if bw is not none and bm is not none %}周 {{ '%+.1f%%'|format(bw*100) }} / 月 {{ '%+.1f%%'|format(bm*100) }}{% endif %}
+          {% if ba is not none %}年化 {{ '%+.2f%%'|format(ba*100) }} · Sharpe {{ '%.2f'|format(v.get('bt_sharpe')) }}
+          {% elif bw is not none %}周 {{ '%+.2f%%'|format(bw*100) }}{% endif %}
+          {% if bm is not none %}· 月 {{ '%+.2f%%'|format(bm*100) }}{% endif %}
         </td>{% endif %}</tr>
     {% endfor %}
   </table>
+  {% set has_freq = namespace(v=false) %}
+  {% for m, v in e.models.items() %}{% if v.bt_annualized_return_weekly is not none or v.bt_annualized_return_monthly is not none %}{% set has_freq.v = true %}{% endif %}{% endfor %}
+  {% if has_freq.v %}
+  <table class="grid" style="margin-top:8px;">
+    <tr><th>模型</th><th>weekly 净年化</th><th>weekly Sharpe</th><th>monthly 净年化</th><th>monthly Sharpe</th></tr>
+    {% for m, v in e.models.items() %}
+    <tr><td>{{ m }}</td>
+      <td>{% set x = v.get('bt_annualized_return_weekly') %}{{ '%+.2f%%'|format(x*100) if x is not none else '—' }}</td>
+      <td>{% set x = v.get('bt_sharpe_weekly') %}{{ '%.2f'|format(x) if x is not none else '—' }}</td>
+      <td>{% set x = v.get('bt_annualized_return_monthly') %}{{ '%+.2f%%'|format(x*100) if x is not none else '—' }}</td>
+      <td>{% set x = v.get('bt_sharpe_monthly') %}{{ '%.2f'|format(x) if x is not none else '—' }}</td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
 </div>
 {% endfor %}
 {% if not experiments %}<p class="muted">暂无历史实验。</p>{% endif %}
