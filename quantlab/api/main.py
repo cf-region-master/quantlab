@@ -1008,6 +1008,31 @@ def page_runs(request: Request):
                                       {"rows": rows, "experiments": experiments})
 
 
+@app.get("/api/signals/{signal_id}/latest.csv")
+def api_signal_latest_csv(signal_id: int):
+    """最新交易日信号截面导出 CSV（code,score）—— 策略落地直接可用。"""
+    from fastapi.responses import PlainTextResponse
+    sig_dict = store.get_signal(signal_id)
+    if sig_dict is None:
+        raise HTTPException(404)
+    s = get_session()
+    try:
+        obj = s.get(Signal, signal_id)
+    finally:
+        s.close()
+    panel = store.signal_panel(obj, store.market())
+    if panel.empty:
+        raise HTTPException(404, "信号面板为空")
+    last = panel.iloc[-1].dropna().sort_values(ascending=False)
+    lines = ["code,score,date"] + [
+        f"{code},{score:.6f},{panel.index[-1].date()}" for code, score in last.items()]
+    nl = chr(10)
+    csv = nl.join(lines) + nl
+    return PlainTextResponse(csv, media_type="text/csv",
+                             headers={"Content-Disposition":
+                                      f'attachment; filename="signal{signal_id}_latest.csv"'})
+
+
 @app.get("/api/signals/{signal_id}/latest-weights")
 def api_signal_latest_weights(signal_id: int):
     """最新一期实际权重（策略落地/复盘）。"""

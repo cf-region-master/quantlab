@@ -35,6 +35,13 @@
   <div class="k">分量相关性</div>
   <div>{% if gain_report.correlation %}min {{ gain_report.correlation.min }} · max {{ gain_report.correlation.max }} · 平均|ρ| {{ gain_report.correlation.mean_abs }}{% else %}—{% endif %}</div>
   <div class="k">结论</div><div>{{ gain_report.gain.note }}</div>
+  {% if gain_report.incremental_ic %}
+  <div class="k">增量 RankIC（正交化分解）</div>
+  <div>{% for c in gain_report.components %}
+    {% set inc = gain_report.incremental_ic.get(c.factor_id|string) %}
+    {{ c.name }} <b class="{{ 'pos' if inc and inc > 0 else 'neg' }}">{{ '%+.4f'|format(inc) if inc is not none else '—' }}</b>{% if not loop.last %} · {% endif %}
+  {% endfor %}<br><span class="muted">正：为组合提供了其他分量没有的新信息</span></div>
+  {% endif %}
   {% if gain_report.gain.gain_vs_best_single is not none and not gain_report.gain.sign_flip %}
   <div class="k">相对最强单因子</div><div>提升 {{ '%.1f%%'|format(gain_report.gain.gain_vs_best_single*100) }}</div>
   {% endif %}

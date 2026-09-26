@@ -110,3 +110,22 @@ def test_orthogonalize_incremental_ic():
     # noise 与前两者本就独立 → 残差方差基本不变
     assert float(ortho["noise"].stack().std()) == pytest.approx(
         float(noise.stack().std()), rel=0.1)
+
+
+def test_ortho_incremental_ic_clone_is_zero():
+    """克隆因子的增量 IC ≈ 0（其信息已被排在前面的因子解释）。"""
+    from quantlab.factors.combine import ortho_incremental_ic
+    rng = np.random.default_rng(9)
+    n = 300
+    idx = pd.bdate_range("2023-01-02", periods=n)
+    cols = list("ABCDE")
+    close = pd.DataFrame(100 * np.cumprod(1 + rng.normal(0, 0.01, (n, 5)), axis=0),
+                         index=idx, columns=cols)
+    alpha = close.shift(-5) / close - 1
+    f0 = alpha.fillna(0.0)
+    clone = f0 + pd.DataFrame(rng.normal(0, 0.01, (n, 5)), index=idx, columns=cols)
+    noise = pd.DataFrame(rng.normal(0, 1, (n, 5)), index=idx, columns=cols)
+    inc = ortho_incremental_ic({"f0": f0, "clone": clone, "noise": noise},
+                               close, ["f0", "clone", "noise"], h=5, min_n=3)
+    assert inc["clone"] == pytest.approx(0.0, abs=0.05)   # 增量≈0
+    assert inc["f0"] > 0.9                                # 原始 alpha 的增量即其自身

@@ -1358,6 +1358,18 @@ def combination_report(signal_id: int, horizon: int | None = None) -> dict:
     singles_named = {str(x["factor_id"]): x["rank_ic"] for x in singles.values()
                      if x["rank_ic"] is not None}
     gain = combination_gain(singles_named, combined)
+    # 正交化模型的增量 IC：每个分量对组合的【新增信息】贡献（Grinold-Kahn 式分解）
+    incremental = None
+    if (s_model := getattr(sig, "model_type", "")) == "ortho_ic_weight_rolling":
+        try:
+            from ..factors.combine import ortho_incremental_ic
+            comps_ordered = [int(c["factor_id"]) for c in (sig.components or [])]
+            panels_o = {str(fid): factor_values(fid) for fid in comps_ordered}
+            inc = ortho_incremental_ic(panels_o, market().close_adj, comps_ordered, h=h)
+            incremental = {str(fid): round(v, 6) if np.isfinite(v) else None
+                           for fid, v in inc.items()}
+        except Exception:  # noqa: BLE001
+            incremental = None
     # 组合 IC 的 NW 修正 t：从存储的逐日 IC 序列重算（lag=h-1，重叠标签纪律）
     combined_t_nw = None
     series = ((diag.get(str(h)) or {}).get("ic_series") or {}).get("rank_ic")
@@ -1371,7 +1383,8 @@ def combination_report(signal_id: int, horizon: int | None = None) -> dict:
             "combined_rank_ic_t_nw": combined_t_nw,
             "components": list(singles.values()),
             "correlation": corr_summary,
-            "gain": gain}
+            "gain": gain,
+            "incremental_ic": incremental}
 
 
 def _rolling_weighted_panel(sig, market, start=None, end=None) -> pd.DataFrame:
