@@ -91,10 +91,25 @@ def compare_combinations(factor_ids: list[int], start: str, end: str,
         except Exception as e:  # noqa: BLE001 —— 单模型失败记录原因，不中断对照
             out[m] = {"error": f"{type(e).__name__}: {e}"}
 
+    # 跨模型稳健性聚合：方向一致比例 + NW 显著模型计数（|t_nw|≥1.96 记显著）
+    valid = [v for v in out.values() if isinstance(v, dict) and v.get("rank_ic_mean") is not None]
+    n_pos = sum(1 for v in valid if v["rank_ic_mean"] > 0)
+    n_neg = sum(1 for v in valid if v["rank_ic_mean"] < 0)
+    majority = "正" if n_pos >= n_neg else "负"
+    consistent = n_pos if majority == "正" else n_neg
+    robustness = {
+        "n_models": len(valid),
+        "majority_direction": majority if valid else None,
+        "direction_consistency": round(consistent / len(valid), 3) if valid else None,
+        "n_sig_nw": sum(1 for v in valid
+                        if v.get("t_nw") is not None and abs(v["t_nw"]) >= 1.96),
+        "note": "方向一致比例=与多数方向相同的模型占比；t_nw 为 Newey-West 修正 t",
+    }
     return {"factor_ids": factor_ids,
             "factor_names": [names.get(i, str(i)) for i in factor_ids],
             "start": start, "end": end, "horizon": horizon,
             "pool": pool,
+            "robustness": robustness,
             "env": cfg.snapshot().get("data", {}).get("universe", {}).get("name"),
             "models": out,
             "note": ("对照纪律：同因子集/同预处理/同区间/同标签，只改组合模型；"
