@@ -950,6 +950,22 @@ def action_run_experiment(request: Request, factor_ids: str = Form(...),
     return RedirectResponse("/experiments", status_code=303)
 
 
+@app.get("/runs", response_class=HTMLResponse)
+def page_runs(request: Request):
+    """研究记录：流水线 runs 对比 + 组合方式对照实验历史。"""
+    rows = store.list_run_summaries()
+    exp_dir = ROOT / "reports" / "combination_experiments"
+    experiments = []
+    if exp_dir.exists():
+        for pth in sorted(exp_dir.glob("*.json"), reverse=True)[:20]:
+            try:
+                experiments.append(json.loads(pth.read_text(encoding="utf-8")))
+            except Exception:  # noqa: BLE001
+                pass
+    return templates.TemplateResponse(request, "runs.html",
+                                      {"rows": rows, "experiments": experiments})
+
+
 @app.get("/api/factors/correlation")
 def api_factor_correlation(ids: str = ""):
     """选中因子的相关矩阵 + 去冗余建议（组合前体检，供 signals/new 热力图）。"""
