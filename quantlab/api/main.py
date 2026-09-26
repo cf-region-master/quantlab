@@ -975,12 +975,14 @@ def page_experiments(request: Request):
 @app.post("/experiments/run")
 def action_run_experiment(request: Request, factor_ids: str = Form(...),
                           start_date: str = Form(...), end_date: str = Form(...),
-                          horizon: int = Form(5)):
+                          horizon: int = Form(5),
+                          include_backtest: str = Form("")):
     id_list = [int(x) for x in factor_ids.split(",") if x.strip()]
     if not 2 <= len(id_list) <= 12:
         raise HTTPException(422, "需选择 2~12 个因子")
     from ..lab.comparison import compare_combinations
-    res = compare_combinations(id_list, start_date, end_date, horizon=horizon)
+    res = compare_combinations(id_list, start_date, end_date, horizon=horizon,
+                               include_backtest=bool(include_backtest))
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     out_dir = ROOT / "reports" / "combination_experiments"
     out_dir.mkdir(parents=True, exist_ok=True)
