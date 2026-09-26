@@ -1251,6 +1251,45 @@ def _signal_pnl(sig_dict) -> pd.Series:
     return pnl
 
 
+def signal_rebalance_hint(signal_id: int) -> dict:
+    """按信号分量的最短半衰期给出调仓频率建议（组合的调仓下限由最短半衰期分量决定）。
+
+    仅统计日频内置/GP 因子；分量含 5m 因子或无诊断数据时给出说明。
+    """
+    s = get_session()
+    try:
+        sig = s.get(Signal, signal_id)
+        if sig is None:
+            raise ValueError(f"信号 {signal_id} 不存在")
+        comp_ids = [int(c["factor_id"]) for c in (sig.components or [])]
+    finally:
+        s.close()
+    rows, min_hl = [], None
+    for fid in comp_ids:
+        try:
+            rep = factor_decay(fid)
+        except Exception:  # noqa: BLE001 —— 单分量失败不阻塞
+            continue
+        hl = rep.get("half_life")
+        rows.append({"factor_id": fid,
+                     "half_life": hl,
+                     "best_h": rep.get("best_h"),
+                     "hint": rep.get("rebalance_hint")})
+        if hl is not None and (min_hl is None or hl < min_hl):
+            min_hl = hl
+    if not rows:
+        return {"min_half_life": None, "suggestion": "无可用分量的衰减数据"}
+    if min_hl is None:
+        sugg = "分量的信息在观测持有期内未见减半：可维持当前调仓频率，但建议对照更高频率实验"
+    elif min_hl <= 2:
+        sugg = f"最短半衰期仅 {min_hl} 个交易日：建议日频/隔日调仓，慢调仓会错失信息"
+    elif min_hl <= 10:
+        sugg = f"最短半衰期 {min_hl} 个交易日：周度调仓与之匹配"
+    else:
+        sugg = f"最短半衰期 {min_hl} 个交易日：月度调仓即可覆盖"
+    return {"min_half_life": min_hl, "suggestion": sugg, "components": rows}
+
+
 def signal_similarity_matrix(min_overlap: int = 30) -> dict:
     """全部信号两两日收益相关矩阵（组合前查重；|ρ|≥0.9 视为重复敞口）。"""
     s = get_session()

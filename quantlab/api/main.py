@@ -1088,6 +1088,12 @@ def api_factor_correlation(ids: str = ""):
     return store.factor_correlation(id_list)
 
 
+@app.get("/api/signals/{signal_id}/rebalance-hint")
+def api_signal_rebalance_hint(signal_id: int):
+    """分量最短半衰期 → 调仓频率建议。"""
+    return store.signal_rebalance_hint(signal_id)
+
+
 @app.get("/api/signals/similarity-matrix")
 def api_signal_similarity_matrix():
     """全部信号两两相关矩阵（组合前查重）。"""

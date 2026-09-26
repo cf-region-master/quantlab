@@ -64,6 +64,10 @@
     </label></div>
   </div>
   <div class="kv" style="margin:12px 0;">
+    <div class="k">调仓频率建议</div>
+    <div id="hlHint" class="muted">选择信号后，按其分量最短半衰期给出建议。</div>
+  </div>
+  <div class="kv" style="margin:12px 0;">
     <div class="k">波动率目标（可选，只降不升）</div>
     <div class="flex">
       <label class="flex" style="gap:6px;"><input type="checkbox" name="vol_target_enabled" value="true" style="width:auto">
@@ -85,6 +89,22 @@
 {% endif %}
 
 <script>
+document.addEventListener('DOMContentLoaded', function(){
+  const sel = document.querySelector('select[name="signal_id"]');
+  if (!sel) return;
+  const upd = async function(){
+    if (!sel.value) { document.getElementById('hlHint').textContent = '选择信号后，按其分量最短半衰期给出建议。'; return; }
+    try {
+      const r = await fetch('/api/signals/' + sel.value + '/rebalance-hint');
+      const j = await r.json();
+      document.getElementById('hlHint').innerHTML = j.suggestion +
+        (j.components && j.components.length ? '<br>' + j.components.map(c=>
+          '· ' + (c.half_life != null ? ('半衰期 ' + c.half_life + ' 日') : '未见减半')).join('<br>') : '');
+    } catch(e) {}
+  };
+  sel.addEventListener('change', upd); upd();
+});
+</script><script>
 const sel = document.getElementById('sigSel');
 if (sel){
   const dS = document.getElementById('dStart'), dE = document.getElementById('dEnd');
