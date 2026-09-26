@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 from contextlib import asynccontextmanager
 
-from fastapi import BackgroundTasks, Body, FastAPI, Form, HTTPException, Request
+from fastapi import BackgroundTasks, Body, FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -394,8 +394,10 @@ def page_backtest_new(request: Request, signal_id: int | None = None):
 
 @app.get("/backtests/compare", response_class=HTMLResponse)
 def page_backtest_compare(request: Request, a: int | None = None, b: int | None = None,
-                          ids: str = ""):
-    id_list = [int(x) for x in ids.split(",") if x.strip()]
+                          ids: list[str] | None = Query(default=None)):
+    # 勾选式表单提交重复的 ids= 参数（GET 多选）；兼容逗号分隔与 a/b 两条形态
+    raw = ids or []
+    id_list = [int(x) for chunk in raw for x in str(chunk).split(",") if x.strip()]
     if not id_list and a is not None and b is not None:
         id_list = [a, b]
     if len(id_list) < 2:
