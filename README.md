@@ -153,7 +153,13 @@ Newey-West 修正 t（重叠标签纪律）；组合"翻正"时如实提示增�
   Σ|w|=1，t 日只用 t−h 前信息）与最新交易日信号截面 CSV
   （`/api/signals/{id}/latest.csv`，code/score/date）—— 直接可用于实盘/复盘系统。
 - **组合对照实验 Web 化**：/experiments 页勾选因子一键跑五模型对照，可勾选
-  「同时对照净值回测」；历史实验卡片含净指标矩阵与「导出 CSV」。
+  「同时对照净值回测」；历史实验卡片含净指标矩阵、「导出 CSV」与「一键复跑」；
+  `--pool` 支持股票池维度对照；`--rebalances` 支持调仓频率矩阵。
+- **最新截面 / 权重导出**：`/api/signals/{id}/latest.csv?date=YYYY-MM-DD`（任一
+  交易日信号截面）与 `/api/signals/{id}/weights.csv`（walk-forward 全期权重）——
+  策略落地与复盘直接可用。
+- **run 间差异对比**：`/api/runs/diff?a=&b=` 逐键对比两个 run 的 manifest
+  （配置/环境/数据口径），复现排查利器。
 - **回测对比视图**：/backtests 列表勾选多条 → `?ids=` 并排对照（共同交易日对齐、
   指标并排、配置差异摘要、毛净值虚线）。
 
