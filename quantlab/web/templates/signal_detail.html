@@ -34,9 +34,9 @@
   <div class="k">持有期 h</div><div>{{ gain_report.horizon }} 交易日（RankIC 口径）</div>
   <div class="k">分量 RankIC（NW 修正 t）</div>
   <div>{% for c in gain_report.components %}
-    {% set tnw = c.rank_ic_t_nw %}
+    {% set tnw = c.get('rank_ic_t_nw') %}
     {{ c.name }} <b>{{ '%+.4f'|format(c.rank_ic) if c.rank_ic is not none else 'NaN' }}</b>
-    <span class="muted">(t_NW {{ '%.2f'|format(tnw) if tnw is not none else '—' }}{{ c.rank_ic_t_nw_stars }})</span>{% if not loop.last %} · {% endif %}
+    <span class="muted">(t_NW {{ '%.2f'|format(tnw) if tnw is not none else '—' }}{{ c.get('rank_ic_t_nw_stars') }})</span>{% if not loop.last %} · {% endif %}
   {% endfor %}</div>
   <div class="k">显著性聚合（各持有期 NW t）</div>
   <div>{% if gain_report.significance %}
