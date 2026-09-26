@@ -129,3 +129,20 @@ def test_ortho_incremental_ic_clone_is_zero():
                                close, ["f0", "clone", "noise"], h=5, min_n=3)
     assert inc["clone"] == pytest.approx(0.0, abs=0.05)   # 增量≈0
     assert inc["f0"] > 0.9                                # 原始 alpha 的增量即其自身
+
+
+# ---------------- 对照实验跨模型稳健性聚合 ----------------
+def test_robustness_aggregation():
+    """compare_combinations 的稳健性聚合：方向一致比例与显著模型计数。"""
+    from quantlab.storage.db import Factor, get_session
+    from quantlab.lab.comparison import compare_combinations
+    s = get_session()
+    try:
+        ids = [f.id for f in s.query(Factor).limit(3)]
+    finally:
+        s.close()
+    res = compare_combinations(ids, "2023-01-01", "2025-06-30", horizon=5)
+    rb = res.get("robustness")
+    assert rb is not None
+    assert 0 <= rb["direction_consistency"] <= 1
+    assert rb["n_models"] == len(res["models"])
