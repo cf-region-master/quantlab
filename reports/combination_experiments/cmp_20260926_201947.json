@@ -1,0 +1,74 @@
+{
+  "factor_ids": [
+    1,
+    2,
+    3
+  ],
+  "factor_names": [
+    "20日低波动",
+    "20日动量",
+    "5日反转"
+  ],
+  "start": "2023-01-01",
+  "end": "2025-06-30",
+  "horizon": 5,
+  "env": "csi300_sample50",
+  "models": {
+    "equal_weight": {
+      "rank_ic_mean": 0.025515,
+      "t_naive": 2.671,
+      "t_nw": 1.551,
+      "n_obs": 601,
+      "bt_annualized_return": -0.026308195245392296,
+      "bt_sharpe": -0.16284705394013557,
+      "bt_max_drawdown": 0.25645245005979356,
+      "bt_total_cost": 197132.58186839387,
+      "bt_turnover_sum": 120.08190923619253
+    },
+    "ic_weight": {
+      "rank_ic_mean": -0.020763,
+      "t_naive": -2.303,
+      "t_nw": -1.283,
+      "n_obs": 601,
+      "bt_annualized_return": 0.058072987746926374,
+      "bt_sharpe": 0.29971101836216585,
+      "bt_max_drawdown": 0.2947960428556108,
+      "bt_total_cost": 198971.96278309956,
+      "bt_turnover_sum": 106.1680353323563
+    },
+    "ic_weight_rolling": {
+      "rank_ic_mean": 0.019181,
+      "t_naive": 1.963,
+      "t_nw": 1.086,
+      "n_obs": 601,
+      "bt_annualized_return": -0.0002917623999336705,
+      "bt_sharpe": -0.006632358337180287,
+      "bt_max_drawdown": 0.24377866660652825,
+      "bt_total_cost": 189584.4673117596,
+      "bt_turnover_sum": 107.27075735382589
+    },
+    "ic_meanvar": {
+      "rank_ic_mean": 0.020201,
+      "t_naive": 2.095,
+      "t_nw": 1.174,
+      "n_obs": 601,
+      "bt_annualized_return": -0.0176699262808242,
+      "bt_sharpe": -0.10887108283436113,
+      "bt_max_drawdown": 0.2856116515499313,
+      "bt_total_cost": 197987.44178575702,
+      "bt_turnover_sum": 114.82562363199797
+    },
+    "ortho_ic_weight_rolling": {
+      "rank_ic_mean": 0.0245,
+      "t_naive": 2.582,
+      "t_nw": 1.464,
+      "n_obs": 601,
+      "bt_annualized_return": -0.03603990742349128,
+      "bt_sharpe": -0.23101850966122978,
+      "bt_max_drawdown": 0.28684693076085244,
+      "bt_total_cost": 199244.11481214646,
+      "bt_turnover_sum": 122.11569962465482
+    }
+  },
+  "note": "对照纪律：同因子集/同预处理/同区间/同标签，只改组合模型；t_nw 为 Newey-West 修正 t（lag=h-1，重叠标签纪律）；均为描述性统计"
+}

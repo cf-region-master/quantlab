@@ -34,15 +34,18 @@ def main() -> int:
                     help="每个模型追加一次真实模拟成交（top10 等权）")
     ap.add_argument("--rebalances", default=None,
                     help="调仓频率列表（逗号分隔，如 weekly,monthly）；需 --backtest")
+    ap.add_argument("--pool", default=None,
+                    help='股票池 JSON，如 {"kind":"index","indices":["csi300"]}')
     args = ap.parse_args()
 
     factor_ids = [int(x) for x in args.factors.split(",") if x.strip()]
     models = [x for x in args.models.split(",") if x.strip()] if args.models else None
     freqs = [x for x in args.rebalances.split(",") if x.strip()] if args.rebalances else None
+    pool = json.loads(args.pool) if args.pool else None
     res = compare_combinations(factor_ids, args.start, args.end,
                                horizon=args.horizon, models=models,
                                include_backtest=args.backtest,
-                               rebalance_freqs=freqs)
+                               rebalance_freqs=freqs, pool=pool)
 
     print(f"\n组合方式对照实验（因子 {res['factor_ids']} · h={args.horizon} · "
           f"{args.start} ~ {args.end}）")

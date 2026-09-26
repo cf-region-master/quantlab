@@ -27,7 +27,8 @@ def compare_combinations(factor_ids: list[int], start: str, end: str,
                          horizon: int = 5, models: list[str] | None = None,
                          min_cross_section: int = 10,
                          include_backtest: bool = False,
-                         rebalance_freqs: list[str] | None = None) -> dict[str, Any]:
+                         rebalance_freqs: list[str] | None = None,
+                         pool: dict | None = None) -> dict[str, Any]:
     """返回 {model: {"rank_ic_mean","t_naive","t_nw","n_obs"}} 与实验元信息。
 
     include_backtest=True 时对每个模型追加一次真实模拟成交（周度 top10 等权，
@@ -80,7 +81,8 @@ def compare_combinations(factor_ids: list[int], start: str, end: str,
                 freqs = rebalance_freqs or ["weekly"]
                 for fq in freqs:
                     try:
-                        bt = _quick_backtest(panel, mk, start, end, rebalance_freq=fq)
+                        bt = _quick_backtest(panel, mk, start, end,
+                                             rebalance_freq=fq, pool=pool)
                         tag = fq if len(freqs) > 1 else ""
                         for k, v in bt.items():
                             entry[f"bt_{k}" + (f"_{fq}" if tag else "")] = v
@@ -101,7 +103,8 @@ def compare_combinations(factor_ids: list[int], start: str, end: str,
 
 
 def _quick_backtest(panel: pd.DataFrame, mk, start: str, end: str,
-                    rebalance_freq: str = "weekly") -> dict[str, float]:
+                    rebalance_freq: str = "weekly",
+                    pool: dict | None = None) -> dict[str, float]:
     """内存版组合回测（top10 等权，配置费率），返回关键净指标。"""
     from ..backtest.engine import run_backtest
     from ..config import load_config
@@ -112,7 +115,11 @@ def _quick_backtest(panel: pd.DataFrame, mk, start: str, end: str,
     bt_cfg["portfolio"] = {**bt_cfg["portfolio"], "top_n": 10, "weighting": "equal_weight"}
     bt_cfg["sample"] = {"start": start, "end": end}
     bt_cfg["trading_days_per_year"] = int(cfg.data["trading_days_per_year"])
-    res = run_backtest(panel, mk, bt_cfg, name="compare")
+    pool_mask = None
+    if pool:
+        from ..data.universe import resolve_pool
+        pool_mask, _ = resolve_pool(mk, pool)
+    res = run_backtest(panel, mk, bt_cfg, name="compare", pool_mask=pool_mask)
     from ..backtest.metrics import compute_metrics
     res.metrics = compute_metrics(res, float(cfg.data["risk_free_annual"]),
                                   int(cfg.data["trading_days_per_year"]))
