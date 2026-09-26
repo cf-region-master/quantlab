@@ -17,6 +17,26 @@
   <div class="toolbar"><a class="btn" href="/factors">返回因子库</a></div>
 </div>
 
+{% if mode == 'refresh' and res.ok %}
+<h2>前后 RankIC(20d) 对照（批评估增强）</h2>
+<table class="grid">
+  <tr><th>因子</th><th>重算前</th><th>重算后</th><th>变化</th></tr>
+  {% for r in res.ok %}
+  {% if r.rank_ic_before is not none and r.rank_ic_after is not none %}
+  {% set dlt = r.rank_ic_after - r.rank_ic_before %}
+  <tr>
+    <td>{{ r.name }}</td>
+    <td class="num">{{ '%+.4f'|format(r.rank_ic_before) }}</td>
+    <td class="num {{ 'pos' if dlt > 0 else 'neg' }}">{{ '%+.4f'|format(r.rank_ic_after) }}</td>
+    <td class="num {{ 'pos' if dlt > 0 else 'neg' }}">{{ '%+.4f'|format(dlt) }}</td>
+  </tr>
+  {% else %}
+  <tr><td>{{ r.name }}</td><td>—</td><td>—</td><td class="muted">对照不可用</td></tr>
+  {% endif %}
+  {% endfor %}
+</table>
+{% endif %}
+
 {% if mode == 'refresh' %}
 <div class="quote-strip" style="margin-top:12px;">
   <div class="q"><div class="k">计算区间</div>

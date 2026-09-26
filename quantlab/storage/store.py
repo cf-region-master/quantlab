@@ -2072,6 +2072,9 @@ def refresh_factor(factor_id: int, pool_id: int | None = None,
                         if f.value_start and f.value_end else None)
         before_spec = f.preprocess_spec
         old_pool = f.pool_id
+        # 批评估增强：记录重算前的 RankIC(20d)，refresh 返回前后对照
+        m_before = s.query(FactorMetric).filter_by(factor_id=factor_id, horizon=20).first()
+        rank_ic_before = m_before.rank_ic_mean if m_before else None
 
         # 顺序很重要：spec 必须在重算因子值【之前】落定。
         # 复权口径（spec.adjust）决定取哪张价格面板 → 决定因子值本身；
@@ -2102,6 +2105,9 @@ def refresh_factor(factor_id: int, pool_id: int | None = None,
         after_range = [str(f.value_start.date()), str(f.value_end.date())]
         after_spec = f.preprocess_spec
         name = f.name
+        # 批评估增强：前后 RankIC(20d) 对照（重算是否改善/恶化一目了然）
+        m_after = s.query(FactorMetric).filter_by(factor_id=factor_id, horizon=20).first()
+        rank_ic_after = m_after.rank_ic_mean if m_after else None
     finally:
         s.close()
     return {"id": factor_id, "name": name,
@@ -2109,6 +2115,7 @@ def refresh_factor(factor_id: int, pool_id: int | None = None,
             "pool_id": target_pool, "universe_note": note,
             "window": win if start or end else "自动（全部本地行情）",
             "spec_changed": after_spec != before_spec,
+            "rank_ic_before": rank_ic_before, "rank_ic_after": rank_ic_after,
             "spec": after_spec}
 
 

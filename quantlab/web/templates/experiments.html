@@ -26,6 +26,7 @@
 {% for e in experiments %}
 <div class="card" style="margin-bottom:14px;">
   <div class="k">因子 {{ e.factor_ids }} · h={{ e.horizon }} · {{ e.start }} ~ {{ e.end }}
+    {% if e.filename %} · <a href="/experiments/{{ e.filename }}.csv">导出 CSV</a>{% endif %}
     {% if e.pool %}· 池 {{ e.pool.indices|join('+') if e.pool.indices is iterable and e.pool.indices is not string else e.pool }}{% endif %}</div>
   <table class="grid" style="margin-top:8px;">
     <tr><th>模型</th><th>RankIC 均值</th><th>t(普通)</th><th>t(NW)</th><th>N</th><th>回测(可选)</th></tr>

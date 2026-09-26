@@ -972,13 +972,47 @@ def page_experiments(request: Request):
     experiments = []
     for pth in exps:
         try:
-            experiments.append(json.loads(pth.read_text(encoding="utf-8")))
+            d = json.loads(pth.read_text(encoding="utf-8"))
+            d["filename"] = pth.stem
+            experiments.append(d)
         except Exception:  # noqa: BLE001
             pass
     return templates.TemplateResponse(request, "experiments.html", {
         "factors": facs, "experiments": experiments,
         "data_start": str(mk.dates.min().date()), "data_end": str(mk.dates.max().date()),
     })
+
+
+@app.get("/experiments/{filename}.csv")
+def experiments_csv(filename: str):
+    """对照实验结果导出 CSV（filename 不含扩展名，防目录穿越）。"""
+    from fastapi.responses import PlainTextResponse
+    import re as _re
+    if not _re.fullmatch(r"cmp_[0-9A-Za-z_]+", filename):
+        raise HTTPException(400, "非法文件名")
+    p_ = ROOT / "reports" / "combination_experiments" / f"{filename}.json"
+    if not p_.exists():
+        raise HTTPException(404)
+    data = json.loads(p_.read_text(encoding="utf-8"))
+    rows = ["model,rank_ic_mean,t_naive,t_nw,n_obs,"
+            "bt_annualized_return,bt_sharpe,bt_max_drawdown,"
+            "bt_annualized_return_weekly,bt_annualized_return_monthly"]
+    for m, v in (data.get("models") or {}).items():
+        if "error" in v:
+            rows.append(f"{m},ERROR")
+            continue
+        def g(k):
+            x = v.get(k)
+            return "" if x is None else f"{x:.6f}"
+        rows.append(",".join([m, g("rank_ic_mean"), g("t_naive"), g("t_nw"),
+                              str(v.get("n_obs", "")), g("bt_annualized_return"),
+                              g("bt_sharpe"), g("bt_max_drawdown"),
+                              g("bt_annualized_return_weekly"),
+                              g("bt_annualized_return_monthly")]))
+    csv = chr(10).join(rows) + chr(10)
+    return PlainTextResponse(csv, media_type="text/csv",
+                             headers={"Content-Disposition":
+                                      f'attachment; filename="{filename}.csv"'})
 
 
 @app.post("/experiments/run")
