@@ -1,0 +1,49 @@
+{
+  "factor_ids": [
+    1,
+    2,
+    3
+  ],
+  "factor_names": [
+    "20日低波动",
+    "20日动量",
+    "5日反转"
+  ],
+  "start": "2023-01-01",
+  "end": "2025-06-30",
+  "horizon": 5,
+  "env": "csi300_sample50",
+  "models": {
+    "equal_weight": {
+      "rank_ic_mean": 0.025515,
+      "t_naive": 2.671,
+      "t_nw": 1.551,
+      "n_obs": 601
+    },
+    "ic_weight": {
+      "rank_ic_mean": -0.020763,
+      "t_naive": -2.303,
+      "t_nw": -1.283,
+      "n_obs": 601
+    },
+    "ic_weight_rolling": {
+      "rank_ic_mean": 0.019181,
+      "t_naive": 1.963,
+      "t_nw": 1.086,
+      "n_obs": 601
+    },
+    "ic_meanvar": {
+      "rank_ic_mean": 0.020201,
+      "t_naive": 2.095,
+      "t_nw": 1.174,
+      "n_obs": 601
+    },
+    "ortho_ic_weight_rolling": {
+      "rank_ic_mean": 0.0245,
+      "t_naive": 2.582,
+      "t_nw": 1.464,
+      "n_obs": 601
+    }
+  },
+  "note": "对照纪律：同因子集/同预处理/同区间/同标签，只改组合模型；t_nw 为 Newey-West 修正 t（lag=h-1，重叠标签纪律）；均为描述性统计"
+}

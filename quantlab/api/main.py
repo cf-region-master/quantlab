@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 import threading
 from pathlib import Path
 from typing import Any
@@ -901,6 +902,47 @@ def api_task_status(task_id: str, log_since: int = 0, curve_max: int = 300):
 def api_factor_decay(factor_id: int):
     """IC 衰减曲线 + 半衰期（调仓频率的量化依据）。"""
     return store.factor_decay(factor_id)
+
+
+@app.get("/experiments", response_class=HTMLResponse)
+def page_experiments(request: Request):
+    """组合方式对照实验：一键跑同因子集 × 全组合模型的对照。"""
+    mk = store.market()
+    s = get_session()
+    try:
+        facs = s.query(Factor).all()
+    finally:
+        s.close()
+    exps = sorted((ROOT / "reports" / "combination_experiments").glob("*.json"),
+                  reverse=True)[:20] if (ROOT / "reports" / "combination_experiments").exists() else []
+    experiments = []
+    for pth in exps:
+        try:
+            experiments.append(json.loads(pth.read_text(encoding="utf-8")))
+        except Exception:  # noqa: BLE001
+            pass
+    return templates.TemplateResponse(request, "experiments.html", {
+        "factors": facs, "experiments": experiments,
+        "data_start": str(mk.dates.min().date()), "data_end": str(mk.dates.max().date()),
+    })
+
+
+@app.post("/experiments/run")
+def action_run_experiment(request: Request, factor_ids: str = Form(...),
+                          start_date: str = Form(...), end_date: str = Form(...),
+                          horizon: int = Form(5)):
+    id_list = [int(x) for x in factor_ids.split(",") if x.strip()]
+    if not 2 <= len(id_list) <= 12:
+        raise HTTPException(422, "需选择 2~12 个因子")
+    from ..lab.comparison import compare_combinations
+    res = compare_combinations(id_list, start_date, end_date, horizon=horizon)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    out_dir = ROOT / "reports" / "combination_experiments"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"cmp_{stamp}.json"
+    out.write_text(json.dumps(res, ensure_ascii=False, indent=2, default=str),
+                   encoding="utf-8")
+    return RedirectResponse("/experiments", status_code=303)
 
 
 @app.get("/api/factors/correlation")

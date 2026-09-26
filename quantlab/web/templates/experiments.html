@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>组合方式对照实验</h1>
+<p class="muted">同一组因子，只改变【组合模型】这一个因素（equal / 全样本 IC / 滚动 ICIR / IC 均值方差 / 正交化），同口径对照 RankIC 与 Newey-West 修正 t。对照纪律：因子集、预处理、区间、标签保持一致。</p>
+
+<div class="card">
+  <form method="post" action="/experiments/run" style="display:grid; gap:10px;">
+    <div><label>选择因子（2~12 个，Ctrl 多选）</label>
+      <select name="factor_ids" id="expFactors" multiple required size="6">
+        {% for f in factors %}<option value="{{ f.id }}">{{ f.name }}（{{ f.source }}）</option>{% endfor %}
+      </select></div>
+    <div class="grid3">
+      <div><label>开始日期</label><input type="date" name="start_date" value="{{ data_start }}" min="{{ data_start }}" max="{{ data_end }}"></div>
+      <div><label>结束日期</label><input type="date" name="end_date" value="{{ data_end }}" min="{{ data_start }}" max="{{ data_end }}"></div>
+      <div><label>持有期 h（交易日）</label><input type="number" name="horizon" value="5" min="1" max="60"></div>
+    </div>
+    <div><button class="btn" type="submit">运行对照实验（同步，秒级）</button></div>
+  </form>
+</div>
+
+<h2>历史实验</h2>
+{% for e in experiments %}
+<div class="card" style="margin-bottom:14px;">
+  <div class="k">因子 {{ e.factor_ids }} · h={{ e.horizon }} · {{ e.start }} ~ {{ e.end }}</div>
+  <table class="grid" style="margin-top:8px;">
+    <tr><th>模型</th><th>RankIC 均值</th><th>t(普通)</th><th>t(NW)</th><th>N</th></tr>
+    {% for m, v in e.models.items() %}
+    <tr><td>{{ m }}</td>
+        {% if v.error %}<td colspan="4" class="neg">{{ v.error }}</td>
+        {% else %}<td class="{{ 'pos' if v.rank_ic_mean > 0 else 'neg' }}">{{ '%.4f'|format(v.rank_ic_mean) }}</td>
+        <td>{{ '%.2f'|format(v.t_naive) }}</td>
+        <td>{{ '%.2f'|format(v.t_nw) if v.t_nw is not none else '—' }}</td>
+        <td>{{ v.n_obs }}</td>{% endif %}</tr>
+    {% endfor %}
+  </table>
+</div>
+{% endfor %}
+{% if not experiments %}<p class="muted">暂无历史实验。</p>{% endif %}
+{% endblock %}
