@@ -1523,11 +1523,14 @@ def combination_report(signal_id: int, horizon: int | None = None) -> dict:
         if np.isfinite(t):
             significance[hk] = {"t_nw": round(t, 3), "stars": sig_stars(t),
                                 "positive": t > 0}
+    waterfall = {"labels": [x["name"] for x in singles.values()] + ["组合信号"],
+                 "values": [x["rank_ic"] for x in singles.values()] + [combined]}
     return {"signal_id": signal_id, "horizon": h,
             "combined_rank_ic": combined,
             "combined_rank_ic_t_nw": combined_t_nw,
             "combined_stars": sig_stars(combined_t_nw),
             "significance": significance,
+            "waterfall": waterfall,
             "components": list(singles.values()),
             "correlation": corr_summary,
             "gain": gain,

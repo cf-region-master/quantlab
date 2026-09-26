@@ -27,6 +27,32 @@
 </div>
 
 {% if gain_report and not gain_report.error %}
+<script>
+var GR = {{ gain_report|tojson }};
+document.addEventListener('DOMContentLoaded', function(){
+  var el = document.getElementById('gainWaterfall');
+  if (!el) return;
+  var wc = echarts.init(el);
+  var comps = GR.components || [];
+  var labels = comps.map(function(c){ return c.name.length>8 ? c.name.slice(0,8)+'…' : c.name; });
+  labels.push('组合信号');
+  var vals = comps.map(function(c){ return c.rank_ic; });
+  vals.push(GR.combined_rank_ic);
+  var colors = vals.map(function(v){ return v >= 0 ? '#1a7f37' : '#b3261e'; });
+  wc.setOption({
+    title:{text:'RankIC 分量 vs 组合', textStyle:{fontSize:13}, left:'center'},
+    tooltip:{trigger:'axis'},
+    xAxis:{type:'category', data:labels, axisLabel:{rotate:20, fontSize:10}},
+    yAxis:{type:'value', name:'RankIC'},
+    series:[{type:'bar', data:vals.map(function(v,i){
+      return {value:v==null?null:Math.round(v*10000)/10000,
+              itemStyle:{color:colors[i]}};
+    })}],
+    grid:{bottom:60}
+  });
+});
+</script>
+<div id="gainWaterfall" class="chart" style="height:240px; margin:12px 0;"></div>
 <h2>组合增益（组合 vs 最强单因子）
   <a class="btn ghost" style="font-size:12px; padding:4px 10px;" href="/api/signals/{{ sig.id }}/combination-report.csv">导出 CSV</a>
   <a class="btn ghost" style="font-size:12px; padding:4px 10px;" href="/api/signals/{{ sig.id }}/combination-report.pdf" target="_blank">导出 PDF</a>
