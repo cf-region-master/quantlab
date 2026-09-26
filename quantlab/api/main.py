@@ -303,8 +303,12 @@ def page_signal_detail(request: Request, sid: int):
     finally:
         s.close()
     diag = sig.get("diagnostics_json") or {}
+    try:
+        gain_report = store.combination_report(sid)
+    except Exception as e:  # noqa: BLE001 —— 组合报告失败不影响详情页
+        gain_report = {"error": f"{type(e).__name__}: {e}"}
     return templates.TemplateResponse(request, "signal_detail.html", {
-        "sig": sig, "fac_names": fac_names, "diag": diag,
+        "sig": sig, "fac_names": fac_names, "diag": diag, "gain_report": gain_report,
         "backtests": store.list_backtests(signal_id=sid),
         "pools": store.list_pools(),
         "factor_ids": [c["factor_id"] for c in (sig.get("components") or [])],
@@ -889,6 +893,19 @@ def api_task_status(task_id: str, log_since: int = 0, curve_max: int = 300):
         return d
     finally:
         s.close()
+
+
+@app.get("/api/factors/correlation")
+def api_factor_correlation(ids: str = ""):
+    """选中因子的相关矩阵 + 去冗余建议（组合前体检，供 signals/new 热力图）。"""
+    id_list = [int(x) for x in ids.split(",") if x.strip()]
+    return store.factor_correlation(id_list)
+
+
+@app.get("/api/signals/{signal_id}/combination-report")
+def api_signal_combination_report(signal_id: int, horizon: int | None = None):
+    """组合增益报告：组合信号 vs 各分量单因子（同口径 RankIC 对照 + 相关性摘要）。"""
+    return store.combination_report(signal_id, horizon)
 
 
 @app.get("/api/runs")

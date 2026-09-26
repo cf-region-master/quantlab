@@ -91,3 +91,40 @@
 - `norm_pool_id` 兼容内置池字符串键（`index_csi300` → 数字 id），不再 `int()` 崩溃。
 - 任务创建前预检三段边界（两引擎共用）；陈旧 PENDING 任务在启动时清理。
 - 测试 53 → **57 项全部通过**（新增：边界语义 3、池键兼容 1）。
+
+
+## feature/debug-upgrade-innovation · 第三批（2026-09-27）：因子组合升级（"怎么更好地组合因子"）
+
+### 新功能（四件套）
+
+1. **组合前体检：因子相关性矩阵 + 去冗余建议**（`factors/combine.py::pooled_corr/redundancy_prune`）
+   - `GET /api/factors/correlation?ids=…`：池化相关矩阵 + 按 |RankIC| 降序的贪心去冗余
+     （|ρ|≥0.8 的低分因子被建议剔除）；signals/new 页选中因子后自动渲染热力图与建议。
+   - 价值：5 个高相关因子等权相加 = 把单一风险放大 5 倍 —— 组合变差的头号原因。
+
+2. **滚动 ICIR 加权 `ic_weight_rolling`**（walk-forward）
+   - w(t) ∝ mean(IC_f[·<t-h]) / std(IC_f[·<t-h])；IC(t) 的标签用到 t+h 价格，
+     因此权重先把 IC 序列 shift(h) —— **严格无前视**（专项测试断言：改动未来标签
+     不影响历史权重）。
+   - 同时如实标注旧 `ic_weight` 的全样本口径存在轻微样本内偏误（只作基线）。
+
+3. **IC 均值-方差凸组合 `ic_meanvar`**（Grinold-Kahn 式，walk-forward）
+   - w(t) ∝ (Σ(t)+λI)⁻¹μ(t)：μ=滚动因子 IC 均值、Σ=因子间 IC 协方差（同样 shift(h)
+     纪律）；λ 相对化，闭式解毫秒级；Σ 不可逆/样本不足时退化 ICIR 权重。
+
+4. **组合增益报告**（`combination_report` + 信号详情页 + `GET /api/signals/{id}/combination-report`）
+   - 组合信号 vs 各分量单因子同口径 RankIC 对照、分量相关性摘要（min/max/平均|ρ|）、
+     相对最强单因子的提升比例；符号翻转（组合翻正）时如实提示"增益比例不适用"。
+
+### 实测（真实数据，mom20/rev5/lowvol20 三因子）
+
+- `ic_meanvar` 组合 RankIC(5d) = **+0.0202**，而最强单因子为 **-0.0213**（动量）——
+  分散化把负 IC 单因子的组合翻正，相关性摘要显示 mom20 与 rev5 相关 -0.51；
+- `ic_weight_rolling` 组合 RankIC(5d) = +0.0192，同样为正；
+- 相关矩阵给出明确的去冗余依据（本例无 ≥0.8 冗余对）。
+
+### 新增测试
+
+`tests/test_combine.py` 6 项：池化相关恒等、贪心去冗余剔除克隆、**无前视性质**
+（截断数据重算，历史权重逐位一致）、Σ 对角闭式解方向、增益符号翻转提示、常数
+因子 IC 记缺失。全量 **63 项测试通过**。

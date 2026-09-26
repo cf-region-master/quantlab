@@ -29,13 +29,56 @@
       {% endfor %}
     </div>
     {% else %}<div class="empty">因子库为空。</div>{% endif %}
+
+  <div id="corrBox" style="display:none; margin-top:14px;">
+    <div class="k">因子相关性与去冗余建议（组合前体检）</div>
+    <div id="corrChart" class="chart" style="height:320px; margin-top:8px;"></div>
+    <div id="corrSuggest" class="muted" style="margin-top:6px;"></div>
+  </div>
+  <script>
+  const factorSelect = document.querySelector('select[name="factor_ids"]');
+  if (factorSelect) {
+    let timer = null;
+    factorSelect.addEventListener('change', ()=>{
+      clearTimeout(timer);
+      timer = setTimeout(async ()=>{
+        const ids = Array.from(factorSelect.selectedOptions).map(o=>o.value);
+        if (ids.length < 2) { document.getElementById('corrBox').style.display='none'; return; }
+        const r = await fetch('/api/factors/correlation?ids=' + ids.join(','));
+        if (!r.ok) return;
+        const j = await r.json();
+        document.getElementById('corrBox').style.display = '';
+        const names = j.factors.map(f=>f.name.length>10 ? f.name.slice(0,10)+'…' : f.name);
+        const data = [];
+        j.matrix.forEach((row,i)=>row.forEach((v,jj)=>{ if(i<jj && v!=null) data.push([jj,i,Math.round(v*1000)/1000]); }));
+        echarts.init(document.getElementById('corrChart')).setOption({
+          title:{text:'因子池化相关矩阵', textStyle:{fontSize:13}, left:'center'},
+          tooltip:{}, grid:{height:'62%', top:'18%'},
+          xAxis:{type:'category', data:names, axisLabel:{rotate:30, fontSize:10}},
+          yAxis:{type:'category', data:names, axisLabel:{fontSize:10}},
+          visualMap:{min:-1, max:1, calculable:true, orient:'horizontal', left:'center', bottom:0,
+                     inRange:{color:['#1a5fb4','#fff','#b3261e']}},
+          series:[{type:'heatmap', data,
+                   label:{show:j.matrix.length<=6, formatter:p=>p.value[2]}}]
+        }, true);
+        const d = j.redundancy;
+        let msg = '建议保留：' + (d.keep.join('、') || '（无）');
+        if (d.drop.length) msg += '；建议剔除：' + d.drop.map(x=>`${x.key}（与 ${x.vs} 相关 ${x.corr}）`).join('、');
+        msg += `（阈值 |ρ|≥${d.threshold}，按 |RankIC| 降序贪心保留）`;
+        document.getElementById('corrSuggest').textContent = msg;
+      }, 400);
+    });
+  }
+  </script>
   </div>
 
   <div class="grid2">
     <div><label>组合模型</label>
       <select name="model_type" id="modelType">
         <option value="equal_weight">equal_weight 等权</option>
-        <option value="ic_weight">ic_weight 按 RankIC(20d) 加权</option>
+        <option value="ic_weight">ic_weight 全样本 RankIC 加权（基线，含轻微样本内偏误）</option>
+        <option value="ic_weight_rolling">ic_weight_rolling 滚动 ICIR 加权（walk-forward，推荐）</option>
+        <option value="ic_meanvar">ic_meanvar IC 均值-方差凸组合（walk-forward，推荐）</option>
         <option value="linear">linear 线性模型（截面回归）</option>
         <option value="tree">tree 决策树 / GBDT</option>
       </select></div>

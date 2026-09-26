@@ -1142,10 +1142,174 @@ def signal_component_weights(sig: Signal) -> dict[int, float]:
 WEIGHTED_MODELS = ("equal_weight", "ic_weight", "weighted")
 
 
+def factor_correlation(factor_ids: list[int]) -> dict:
+    """选中因子的池化相关矩阵 + 去冗余建议（组合前的"体检"）。
+
+    相关性用原始因子值（zscore 等仿射变换不改变相关系数）；分数取每个因子
+    最接近 20 日（没有则最大）的 RankIC 均值。
+    """
+    from ..factors.combine import pooled_corr, redundancy_prune
+
+    ids = [int(x) for x in factor_ids]
+    if len(ids) < 2:
+        raise ValueError("至少选择 2 个因子")
+    if len(ids) > 12:
+        raise ValueError("一次最多比较 12 个因子")
+    panels, meta = {}, []
+    s = get_session()
+    try:
+        for fid in ids:
+            f = s.get(Factor, fid)
+            if f is None:
+                continue
+            ms = s.query(FactorMetric).filter_by(factor_id=fid).all()
+            if ms:
+                pick = min(ms, key=lambda m: (abs(m.horizon - 20), -m.horizon))
+                ric = pick.rank_ic_mean
+            else:
+                ric = None
+            meta.append({"id": fid, "name": f.name, "rank_ic": ric,
+                         "horizon": (pick.horizon if ms else None)})
+            panels[str(fid)] = factor_values(fid)
+    finally:
+        s.close()
+    if len(panels) < 2:
+        raise ValueError("有效因子不足 2 个（缺因子值）")
+    corr = pooled_corr(panels).fillna(0.0)
+    scores = {str(m["id"]): (m["rank_ic"] or 0.0) for m in meta}
+    red = redundancy_prune(corr, scores, max_abs_corr=0.8)
+    name_of = {str(m["id"]): m["name"] for m in meta}
+    red = {"keep": [name_of.get(k, k) for k in red["keep"]],
+           "drop": [{**d, "key": name_of.get(d["key"], d["key"]),
+                     "vs": name_of.get(d["vs"], d["vs"])} for d in red["drop"]],
+           "threshold": red["threshold"]}
+    return {"factors": meta,
+            "keys": list(corr.columns),
+            "matrix": [[round(float(x), 4) if np.isfinite(x) else None
+                        for x in row] for row in corr.to_numpy()],
+            "redundancy": red}
+
+
+def combination_report(signal_id: int, horizon: int | None = None) -> dict:
+    """组合增益报告：组合信号 vs 各分量单因子，同口径 RankIC 对照 + 相关性摘要。"""
+    from ..factors.combine import pooled_corr
+
+    s = get_session()
+    try:
+        sig = s.get(Signal, signal_id)
+        if sig is None:
+            raise ValueError(f"信号 {signal_id} 不存在")
+        h_default = int((sig.model_params or {}).get("label_horizon", 20))
+        comps = [int(c["factor_id"]) for c in (sig.components or [])]
+    finally:
+        s.close()
+    h = int(horizon or h_default)
+
+    diag = (get_signal(signal_id) or {}).get("diagnostics_json") or {}
+    if str(h) in diag:
+        combined = (diag[str(h)].get("ic_summary") or {}).get("rank_ic", {}).get("mean")
+    elif diag:
+        k = sorted(diag, key=lambda x: abs(int(x) - h))[0]
+        h = int(k)
+        combined = (diag[k].get("ic_summary") or {}).get("rank_ic", {}).get("mean")
+    else:
+        combined = None
+
+    singles, panels = {}, {}
+    s = get_session()
+    try:
+        for fid in comps:
+            f = s.get(Factor, fid)
+            if f is None:
+                continue
+            ms = s.query(FactorMetric).filter_by(factor_id=fid).all()
+            pick = None
+            if ms:
+                cand = [m for m in ms if m.horizon == h]
+                pick = cand[0] if cand else min(ms, key=lambda m: abs(m.horizon - h))
+            singles[fid] = {"factor_id": fid, "name": f.name,
+                            "rank_ic": (pick.rank_ic_mean if pick else None),
+                            "horizon": (pick.horizon if pick else None)}
+            try:
+                panels[fid] = factor_values(fid)
+            except Exception:  # noqa: BLE001
+                pass
+    finally:
+        s.close()
+
+    corr_summary = None
+    vals = [v for v in panels.values() if len(panels) >= 2]
+    if len(vals) >= 2:
+        c = pooled_corr(panels)
+        cc = c.to_numpy(dtype="float64")
+        off = cc[~np.eye(cc.shape[0], dtype=bool)]
+        off = off[np.isfinite(off)]
+        if off.size:
+            corr_summary = {"min": round(float(off.min()), 4),
+                            "max": round(float(off.max()), 4),
+                            "mean_abs": round(float(np.abs(off).mean()), 4)}
+
+    from ..factors.combine import combination_gain
+    singles_named = {str(x["factor_id"]): x["rank_ic"] for x in singles.values()
+                     if x["rank_ic"] is not None}
+    gain = combination_gain(singles_named, combined)
+    return {"signal_id": signal_id, "horizon": h,
+            "combined_rank_ic": combined,
+            "components": list(singles.values()),
+            "correlation": corr_summary,
+            "gain": gain}
+
+
+def _rolling_weighted_panel(sig, market, start=None, end=None) -> pd.DataFrame:
+    """ic_weight_rolling / ic_meanvar：walk-forward 因子权重 + 逐行加权。
+
+    各因子先按【自己的 spec + 池】得到 zscore 面板（与 weighted 路径同源），
+    权重由 factors/combine 的滚动 ICIR / IC 均值-方差闭式解给出。
+    """
+    from ..factors.combine import (apply_weights, rolling_ic_meanvar_weights,
+                                   rolling_icir_weights)
+
+    mp = dict(sig.model_params or {})
+    h = max(1, int(mp.get("label_horizon", 5)))
+    window = max(20, int(mp.get("window", 252)))
+    min_periods = max(10, int(mp.get("min_periods", 60)))
+    ridge = float(mp.get("ridge", 0.5))
+
+    panels = {}
+    for c in (sig.components or []):
+        fid = int(c["factor_id"])
+        s2 = get_session()
+        try:
+            f = s2.get(Factor, fid)
+            if f is None:
+                raise ValueError(f"因子 {fid} 不存在")
+            spec, f_pool = f.preprocess_spec, f.pool_id
+        finally:
+            s2.close()
+        v = factor_values(fid)
+        scoped, _ = _apply_pool(v, f_pool, market)
+        panels[fid] = apply_preprocess_spec(scoped, spec)
+
+    if sig.model_type == "ic_meanvar":
+        wmat = rolling_ic_meanvar_weights(panels, market.close_adj, h=h, window=window,
+                                          min_periods=min_periods, ridge=ridge)
+    else:
+        wmat = rolling_icir_weights(panels, market.close_adj, h=h, window=window,
+                                    min_periods=min_periods)
+    panel = apply_weights(panels, wmat)
+    lo = pd.Timestamp(start) if start is not None else pd.Timestamp(sig.start_date)
+    hi = pd.Timestamp(end) if end is not None else pd.Timestamp(sig.end_date)
+    return panel.loc[(panel.index >= lo) & (panel.index <= hi)]
+
+
 def signal_panel(sig: Signal, market, start=None, end=None) -> pd.DataFrame:
     """由信号定义合成信号面板（date × code，分数越高越优）。
 
     equal_weight / ic_weight：各因子按【各自的预处理参数】处理后按权重求和。
+      ⚠️ ic_weight 用全样本 RankIC 均值定权重 —— 存在轻微样本内偏误（权重看过
+      全样本），只作基线；推荐用 ic_weight_rolling / ic_meanvar（walk-forward）。
+    ic_weight_rolling：逐日 ICIR 滚动权重（t 日权重只用 t-h 之前的 IC，无前视）。
+    ic_meanvar：IC 均值-方差凸组合 w ∝ (Σ+λI)⁻¹μ（同样 walk-forward）。
     linear / tree：walk-forward 拟合（见 model 层），训练窗口严格只用过去数据。
     """
     from ..config import load_config
@@ -1176,6 +1340,9 @@ def signal_panel(sig: Signal, market, start=None, end=None) -> pd.DataFrame:
         panel = sum(zs)
         panel.columns.name = "code"
         return panel.loc[(panel.index >= start) & (panel.index <= end)]
+
+    if sig.model_type in ("ic_weight_rolling", "ic_meanvar"):
+        return _rolling_weighted_panel(sig, market, start, end)
 
     if sig.model_type in ("linear", "tree"):
         from ..factors.model import fit_walk_forward

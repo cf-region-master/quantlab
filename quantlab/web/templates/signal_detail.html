@@ -21,6 +21,25 @@
   <div class="k">创建时间</div><div class="mono">{{ sig.created_at[:16].replace('T',' ') }}</div>
 </div>
 
+{% if gain_report and not gain_report.error %}
+<h2>组合增益（组合 vs 最强单因子）</h2>
+<div class="kv">
+  <div class="k">持有期 h</div><div>{{ gain_report.horizon }} 交易日（RankIC 口径）</div>
+  <div class="k">组合信号 RankIC</div>
+  <div><b class="{{ 'pos' if gain_report.combined_rank_ic and gain_report.combined_rank_ic > 0 else 'neg' }}">{{ '%.4f'|format(gain_report.combined_rank_ic) if gain_report.combined_rank_ic is not none else 'NaN' }}</b></div>
+  {% for c in gain_report.components %}
+  <div class="k">单因子 {{ c.name }}</div>
+  <div>RankIC {{ '%.4f'|format(c.rank_ic) if c.rank_ic is not none else 'NaN' }}（h={{ c.horizon }}）</div>
+  {% endfor %}
+  <div class="k">分量相关性</div>
+  <div>{% if gain_report.correlation %}min {{ gain_report.correlation.min }} · max {{ gain_report.correlation.max }} · 平均|ρ| {{ gain_report.correlation.mean_abs }}{% else %}—{% endif %}</div>
+  <div class="k">结论</div><div>{{ gain_report.gain.note }}</div>
+  {% if gain_report.gain.gain_vs_best_single is not none and not gain_report.gain.sign_flip %}
+  <div class="k">相对最强单因子</div><div>提升 {{ '%.1f%%'|format(gain_report.gain.gain_vs_best_single*100) }}</div>
+  {% endif %}
+</div>
+{% endif %}
+
 <h2>信号诊断</h2>
 {% if diag and not diag.error %}
 <div class="toolbar" style="margin-bottom:10px;">
