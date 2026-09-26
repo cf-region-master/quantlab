@@ -1239,6 +1239,62 @@ def factor_correlation(factor_ids: list[int]) -> dict:
             "redundancy": red}
 
 
+def signal_similarity(signal_id: int, vs: list[int] | None = None) -> dict:
+    """新信号与既有信号的日收益相关性 —— 防"策略重复"。
+
+    动机：两个高相关（|ρ|>0.9）的策略本质是同一敞口的重复计价，
+    组合层面互相对冲不掉，只会放大容量与交易成本。
+    口径：双方在重叠区间的日收益（信号等权 top_n/3? 不引入回测假设 ——
+    直接用信号【分值面板】的截面均值日收益近似策略收益，文档化说明）。
+    """
+    from ..factors.combine import pooled_corr
+
+    def sig_pnl(sig_dict) -> pd.Series:
+        s = get_session()
+        try:
+            obj = s.get(Signal, int(sig_dict["id"]))
+        finally:
+            s.close()
+        panel = signal_panel(obj, market())
+        # 等权持有全部有分值资产的日收益近似（截面均值），仅作相似度口径
+        return panel.mean(axis=1)
+
+    target = get_signal(signal_id)
+    if target is None:
+        raise ValueError(f"信号 {signal_id} 不存在")
+    tgt_pnl = sig_pnl(target)
+
+    s = get_session()
+    try:
+        others = [x for x in s.query(Signal).all() if x.id != signal_id]
+        ids = [o.id for o in others]
+    finally:
+        s.close()
+    if vs is not None:
+        ids = [i for i in ids if i in set(int(v) for v in vs)]
+
+    rows = []
+    for oid in ids:
+        od = get_signal(oid) or {}
+        try:
+            pnl = sig_pnl(od)
+            joined = pd.concat([tgt_pnl, pnl], axis=1, join="inner").dropna()
+            if len(joined) < 30:
+                rows.append({"id": oid, "name": od.get("name"), "corr": None,
+                             "n_overlap": int(len(joined)),
+                             "note": "重叠区间不足 30 日"})
+                continue
+            c = float(joined.iloc[:, 0].corr(joined.iloc[:, 1]))
+            rows.append({"id": oid, "name": od.get("name"),
+                         "corr": round(c, 4), "n_overlap": int(len(joined)),
+                         "flag": ("重复" if abs(c) >= 0.9 else
+                                  "高相关" if abs(c) >= 0.7 else "ok")})
+        except Exception as e:  # noqa: BLE001
+            rows.append({"id": oid, "name": od.get("name"), "error": f"{type(e).__name__}: {e}"})
+    rows.sort(key=lambda r: -abs(r.get("corr") or 0))
+    return {"signal_id": signal_id, "vs": rows}
+
+
 def combination_report(signal_id: int, horizon: int | None = None) -> dict:
     """组合增益报告：组合信号 vs 各分量单因子，同口径 RankIC 对照 + 相关性摘要。"""
     from ..factors.combine import pooled_corr

@@ -957,6 +957,13 @@ def api_factor_correlation(ids: str = ""):
     return store.factor_correlation(id_list)
 
 
+@app.get("/api/signals/{signal_id}/similarity")
+def api_signal_similarity(signal_id: int, vs: str = ""):
+    """新信号与既有信号的日收益相关性（防策略重复；|ρ|≥0.9 标记“重复”）。"""
+    vs_ids = [int(x) for x in vs.split(",") if x.strip()] or None
+    return store.signal_similarity(signal_id, vs_ids)
+
+
 @app.get("/api/signals/{signal_id}/combination-report")
 def api_signal_combination_report(signal_id: int, horizon: int | None = None):
     """组合增益报告：组合信号 vs 各分量单因子（同口径 RankIC 对照 + 相关性摘要）。"""

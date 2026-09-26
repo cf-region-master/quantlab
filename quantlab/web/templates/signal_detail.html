@@ -41,6 +41,29 @@
 </div>
 {% endif %}
 
+<h2>策略相似度（与既有信号）</h2>
+<div class="muted" id="simHint">计算中…</div>
+<table class="grid" id="simTable" style="display:none; margin-top:8px;">
+  <tr><th>信号</th><th>日收益相关</th><th>重叠交易日</th><th>判定</th></tr>
+</table>
+<script>
+fetch('/api/signals/{{ sig.id }}/similarity').then(r=>r.json()).then(j=>{
+  const rows = (j.vs||[]).filter(x=>!x.error && x.corr!=null);
+  if (!rows.length) { document.getElementById('simHint').textContent='暂无可比信号或重叠区间不足。'; return; }
+  const t = document.getElementById('simTable');
+  t.style.display='';
+  for (const x of rows) {
+    const tr = document.createElement('tr');
+    const cls = Math.abs(x.corr)>=0.9 ? 'neg' : '';
+    tr.innerHTML = `<td><a href="/signals/${x.id}">${x.name||('#'+x.id)}</a></td>` +
+      `<td class="${cls}">${x.corr.toFixed(4)}</td><td>${x.n_overlap}</td>` +
+      `<td>${x.flag==='重复'?'<b class="neg">重复（|ρ|≥0.9）</b>':x.flag==='高相关'?'高相关':'正常'}</td>`;
+    t.appendChild(tr);
+  }
+  document.getElementById('simHint').textContent = '口径：信号分值面板截面均值日收益的重叠区间相关（相似度专用，非策略收益）。';
+}).catch(e=>{ document.getElementById('simHint').textContent = '相似度计算失败：'+e; });
+</script>
+
 <h2>信号诊断</h2>
 {% if diag and not diag.error %}
 <div class="toolbar" style="margin-bottom:10px;">
