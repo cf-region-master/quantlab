@@ -1,0 +1,32 @@
+# 研究范围与数据口径（Project1 数据模块）
+universe:
+  name: csi300_sample50
+  rule: "沪深300当期成分，按代码升序步长抽样50只（确定性，可复现）"
+  size: 50
+  pit_limitation: "成分名单为当期快照，未做 point-in-time 处理（未建模限制，见研究报告局限章节）"
+
+period:
+  start: "2022-01-04"
+  end: "2025-12-31"
+
+source:
+  library: akshare
+  endpoints:
+    daily: stock_zh_a_daily         # sina，日频原始行情（未复权），eastmoney 兜底
+    adj_factor: stock_zh_a_daily    # sina，hfq 乘法累计复权因子
+    benchmark: stock_zh_index_daily # sina，沪深300 指数
+  frequency: "日频（每交易日一行）"
+  units:
+    price: "元（原始未复权价）"
+    volume: "股（sina 口径）"
+    amount: "元"
+    turnover_rate: "比例（sina 口径，0-1）"
+
+adjustment:
+  convention: "乘法累计因子"
+  formula: "P_adj(t) = P_raw(t) * a(t) / a(tau)"
+  reference: "tau = 样本首日（每只股票各自样本窗口内首个有因子值的交易日）"
+  note: "原始价与因子分别保存于 data/raw；不同参考日期的价格片段不拼接"
+
+risk_free_annual: 0.015   # 无风险收益假设（年化），文档化假设，非市场数据
+trading_days_per_year: 243  # A股年化因子 A

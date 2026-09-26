@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>策略（信号）</h1>
+    <p class="lead">
+      策略的本质是<b>信号</b>：由因子按某个模型组合出的纯权重输出，<b>不含回测配置</b>。
+      因此信号可以像因子一样做 IC / RankIC / 分层诊断，也可以在<b>不同时间区间、股票池、权重规则与成本</b>下
+      反复回测 —— 回测记录见 <a href="/backtests">回测</a>。
+    </p>
+  </div>
+  <div class="toolbar">
+    <a class="btn" href="/signals/new">＋ 新建信号</a>
+    <a class="btn ghost" href="/backtests/new">直接跑回测 →</a>
+  </div>
+</div>
+
+{% if signals %}
+<div class="table-wrap" style="margin-top:14px;">
+<table class="grid">
+  <tr><th>ID</th><th>名称</th><th>因子分量</th><th>模型</th><th>有效区间</th>
+      <th class="num">h=20 RankIC</th><th class="num">h=20 ICIR</th><th class="num">回测次数</th><th>创建时间</th></tr>
+  {% for s in signals %}
+  {% set d = (s.diagnostics_json or {}).get('20', {}) %}
+  {% set summ = (d.ic_summary or {}) if d else {} %}
+  <tr class="rowlink" onclick="location='/signals/{{ s.id }}'">
+    <td>{{ s.id }}</td>
+    <td><a class="rowlink-a" href="/signals/{{ s.id }}"><b>{{ s.name }}</b></a></td>
+    <td class="num">{{ s.components|length }}</td>
+    <td class="mono">{{ s.model_type }}</td>
+    <td class="mono">{{ s.start_date[:10] }} ~ {{ s.end_date[:10] }}</td>
+    <td class="num">{% if summ.rank_ic and summ.rank_ic.mean is not none %}<span class="{{ 'pos' if summ.rank_ic.mean > 0 else 'neg' }}">{{ '%+.4f'|format(summ.rank_ic.mean) }}</span>{% else %}—{% endif %}</td>
+    <td class="num">{{ '%.3f'|format(summ.rank_ic.icir) if summ.rank_ic and summ.rank_ic.icir is not none else '—' }}</td>
+    <td class="num">{{ s.n_backtests }}</td>
+    <td class="mono">{{ s.created_at[:16].replace('T',' ') }}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+<div class="chart-note">信号诊断口径与因子库完全一致（IC=Pearson、RankIC=Spearman 平均秩、样本不足记缺失不填 0）。</div>
+{% else %}
+<div class="empty">还没有信号。<a href="/signals/new">新建一个</a>：选因子 → 定区间 → 得到信号及其诊断。</div>
+{% endif %}
+{% endblock %}

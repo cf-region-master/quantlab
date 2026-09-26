@@ -1,0 +1,385 @@
+{% extends "base.html" %}
+{% block content %}
+{# DIAG / charts 必须在页面顶部声明：下面的 _layered_block.html 是内联脚本，
+   会在页面底部的脚本之前执行，声明放底部会导致它读到未定义的 DIAG。 #}
+<script>const DIAG = {{ diag|tojson }}; var charts = [];</script>
+{% set sp = spec %}
+<div class="crumb"><a href="/factors">因子库</a> / {{ f.name }}</div>
+<div class="page-head">
+  <div>
+    <h1>{{ f.name }} <span class="badge {{ f.source }}">{{ f.source }}</span></h1>
+    <p class="lead mono">{{ f.expression[:110] }}{% if f.expression|length > 110 %}…{% endif %}</p>
+  </div>
+  <div class="toolbar">
+    <a class="btn ghost" href="/signals/new">用该因子建信号 →</a>
+    <a class="btn ghost" href="/factors">← 因子库</a>
+  </div>
+</div>
+
+<!-- ==================== 参数总表（本页最重要的一块） ==================== -->
+<h2 style="margin-top:16px;">参数</h2>
+<form method="post" action="/factors/{{ f.id }}/refresh" id="paramForm">
+<input type="hidden" name="spec_mode" value="set">
+<table class="param-table">
+  <tr><th style="width:210px;">参数</th><th style="width:150px;">当前值</th><th>设置</th></tr>
+
+  <tr class="grouphead"><td colspan="3">计算范围</td></tr>
+  <tr>
+    <td class="pname"><span class="zh">股票池</span><span class="code">pool_id</span></td>
+    <td class="pval">{{ f.universe_note or '未登记' }}</td>
+    <td class="pedit"><div class="ctl">
+      <select name="pool_id">
+        {% for p in pools %}
+        {# kind='all' 的池就是"不过滤"，提交空值 -> 服务层按 None 处理，
+           避免 None 与 id=1 被当成两次不同的池而弹出假"换池"警告 #}
+        <option value="{{ '' if p.kind == 'all' else p.id }}"
+          {% if f.pool_id == p.id or (f.pool_id is none and p.kind == 'all') %} selected{% endif %}>
+          {{ p.name }}{% if p.kind == 'index' %}（PIT 动态）{% endif %}</option>
+        {% endfor %}
+      </select>
+    </div></td>
+  </tr>
+  <tr>
+    <td class="pname"><span class="zh">计算区间</span><span class="code">start_date ~ end_date</span></td>
+    <td class="pval mono">{% if f.value_start %}{{ f.value_start.date() }} ~ {{ f.value_end.date() }}{% else %}未登记{% endif %}</td>
+    <td class="pedit"><div class="ctl">
+      <input type="date" name="start_date" value="{{ f.value_start.date() if f.value_start else data_start }}" min="{{ data_start }}" max="{{ data_end }}">
+      <span class="lbl">~</span>
+      <input type="date" name="end_date" value="{{ f.value_end.date() if f.value_end else data_end }}" min="{{ data_start }}" max="{{ data_end }}">
+      <span class="lbl">本地行情 {{ data_start }} ~ {{ data_end }}</span>
+    </div></td>
+  </tr>
+  <tr>
+    <td class="pname"><span class="zh">复权方式</span><span class="code">adjust</span></td>
+    <td class="pval">{{ short_label('adjust', sp.adjust) }}</td>
+    <td class="pedit"><div class="ctl">
+      <select name="adjust">
+        {% for k, v in spec_schema.evaluation.adjust.choices.items() %}
+        <option value="{{ k }}" {% if sp.adjust == k %}selected{% endif %}>{{ v }}</option>
+        {% endfor %}
+      </select>
+      <span class="lbl">换口径会重算因子值本身</span>
+    </div>
+    <div class="hint" style="margin-top:6px;">
+      两者只差一个每股常数 → 收益率序列相同；只有用到价格绝对水平的因子会变。
+    </div>
+    </td>
+  </tr>
+
+  <tr class="grouphead"><td colspan="3">预处理（顺序：缺失值 → 去极值 → 标准化 → 中性化）</td></tr>
+  <tr>
+    <td class="pname"><span class="zh">缺失值填补</span><span class="code">fillna_method</span></td>
+    <td class="pval">{{ short_label('fillna_method', sp.fillna_method) }}{% if sp.fillna_method == 'pad' and sp.fillna_limit %}（最长 {{ sp.fillna_limit }} 天）{% endif %}</td>
+    <td class="pedit"><div class="ctl">
+      <select name="fillna_method">
+        {% for k, v in spec_schema.fillna.method.choices.items() %}
+        <option value="{{ k }}" {% if sp.fillna_method == k %}selected{% endif %}>{{ v }}</option>
+        {% endfor %}
+      </select>
+      <span class="lbl">最长天数</span>
+      <input type="number" class="mini" name="fillna_limit" min="0" max="250" step="1" value="{{ sp.fillna_limit }}">
+    </div></td>
+  </tr>
+  <tr>
+    <td class="pname"><span class="zh">去极值</span><span class="code">outlier_method + alpha/k</span></td>
+    <td class="pval">{{ short_label('outlier_method', sp.outlier_method) }}{% if sp.outlier_method == 'percentile' %}（alpha={{ '%g'|format(sp.alpha) }}）{% elif sp.outlier_method in ('MAD','3sigma') %}（k={{ '%g'|format(sp.k) }}）{% endif %}</td>
+    <td class="pedit"><div class="ctl">
+      <select name="outlier_method">
+        {% for k, v in spec_schema.outlier.method.choices.items() %}
+        <option value="{{ k }}" {% if sp.outlier_method == k %}selected{% endif %}>{{ v }}</option>
+        {% endfor %}
+      </select>
+      <span class="lbl">alpha</span>
+      <input type="number" class="mini" name="alpha" min="0" max="0.5" step="0.001" value="{{ sp.alpha }}">
+      <span class="lbl">k</span>
+      <input type="number" class="mini" name="k" min="0.5" max="10" step="0.1" value="{{ sp.k }}">
+    </div></td>
+  </tr>
+  <tr>
+    <td class="pname"><span class="zh">标准化</span><span class="code">normalize_method + min_n</span></td>
+    <td class="pval">{{ short_label('normalize_method', sp.normalize_method) }}{% if sp.normalize_method != 'none' %}（min_n={{ sp.min_n }}）{% endif %}</td>
+    <td class="pedit"><div class="ctl">
+      <select name="normalize_method">
+        {% for k, v in spec_schema.normalize.method.choices.items() %}
+        <option value="{{ k }}" {% if sp.normalize_method == k %}selected{% endif %}>{{ v }}</option>
+        {% endfor %}
+      </select>
+      <span class="lbl">最低截面样本</span>
+      <input type="number" class="mini" name="min_n" min="3" max="500" step="1" value="{{ sp.min_n }}">
+    </div></td>
+  </tr>
+  <tr>
+    <td class="pname"><span class="zh">中性化</span><span class="code">neutralize_method</span></td>
+    <td class="pval">{{ short_label('neutralize_method', sp.neutralize_method) }}{% if sp.neutralize_method != 'none' %}（{{ short_label('neutralize_level', sp.neutralize_level) }}，min_n={{ sp.neutralize_min_n }}）{% endif %}</td>
+    <td class="pedit"><div class="ctl">
+      <select name="neutralize_method">
+        {% for k, v in spec_schema.neutralize.method.choices.items() %}
+        <option value="{{ k }}" {% if sp.neutralize_method == k %}selected{% endif %}>{{ v }}</option>
+        {% endfor %}
+      </select>
+      <select name="neutralize_level" style="flex:0 0 130px;">
+        {% for k, v in spec_schema.neutralize.level.choices.items() %}
+        <option value="{{ k }}" {% if sp.neutralize_level == k %}selected{% endif %}>{{ v }}</option>
+        {% endfor %}
+      </select>
+      <span class="lbl">min_n</span>
+      <input type="number" class="mini" name="neutralize_min_n" min="2" max="200" step="1" value="{{ sp.neutralize_min_n }}">
+    </div></td>
+  </tr>
+
+  <tr class="grouphead"><td colspan="3">评估口径</td></tr>
+  <tr>
+    <td class="pname"><span class="zh">IC 相关系数</span><span class="code">ic_method</span></td>
+    <td class="pval">{{ short_label('ic_method', sp.ic_method) }}</td>
+    <td class="pedit"><div class="ctl">
+      <select name="ic_method">
+        {% for k, v in spec_schema.ic.method.choices.items() %}
+        <option value="{{ k }}" {% if sp.ic_method == k %}selected{% endif %}>{{ v }}</option>
+        {% endfor %}
+      </select>
+    </div></td>
+  </tr>
+  <tr>
+    <td class="pname"><span class="zh">持有期 h</span><span class="code">horizons (n_day)</span></td>
+    <td class="pval">{{ diag.keys()|list|sort|join(', ') or '—' }}</td>
+    <td class="pedit"><div class="ctl">
+      <input type="text" name="horizons" value="{{ sp.horizons }}" placeholder="5,20">
+      <span class="lbl">逗号分隔；IC / 分层净值都按这些持有期分别产出</span>
+    </div></td>
+  </tr>
+  <tr>
+    <td class="pname"><span class="zh">分层组数 K</span><span class="code">quantile</span></td>
+    <td class="pval">{{ sp.quantile }} 层</td>
+    <td class="pedit"><div class="ctl">
+      <input type="number" class="mini" name="quantile" min="2" max="20" step="1" value="{{ sp.quantile }}">
+      <span class="lbl">第 1 层因子值最低、第 K 层最高</span>
+    </div></td>
+  </tr>
+</table>
+
+<div class="param-actions">
+  <button class="btn" type="submit" id="saveBtn">保存并重算</button>
+  <span class="muted" style="font-size:12.5px;">
+    只改参数不需要重算因子原始值：诊断、IC、分层净值会在数秒内一起重算。
+    要一次重算多个因子，去<a href="/factors"><b>因子库列表页</b></a>勾选后批量执行。
+  </span>
+</div>
+<div id="warnBox" style="display:none" class="card bad" >
+  <div class="k neg">⚠ 换池警告</div>
+  <div class="n" id="warnText" style="margin-top:6px;"></div>
+  <label style="display:flex; gap:8px; align-items:flex-start; margin-top:8px;">
+    <input type="checkbox" name="confirm_pool_change" value="1" id="confirmBox" style="width:auto; margin-top:3px;">
+    <span>我已理解：换池会改变截面，全部诊断都会变，历史结论不再可比</span>
+  </label>
+</div>
+</form>
+
+<!-- ==================== 核心指标 ==================== -->
+<h2>诊断指标</h2>
+<div class="metrics">
+  {% for h in diag.keys()|list|sort %}
+  {% set d = diag[h] %}{% set sm = d.ic_summary or {} %}{% set qs = d.quantile_summary or {} %}
+  {% set ln = d.layer_nav or {} %}
+  <div class="card">
+    <div class="k">持有期 h = {{ h }} 交易日</div>
+    <div class="metrics" style="grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
+      <div><div class="k">IC 均值（{{ sp.ic_method }}）</div>
+        <div style="font-size:18px;font-weight:700" class="{{ 'pos' if sm.ic and sm.ic.mean is not none and sm.ic.mean > 0 else 'neg' }}">
+          {{ '%+.4f'|format(sm.ic.mean) if sm.ic and sm.ic.mean is not none else 'NaN' }}</div></div>
+      <div><div class="k">RankIC 均值</div>
+        <div style="font-size:18px;font-weight:700" class="{{ 'pos' if sm.rank_ic and sm.rank_ic.mean is not none and sm.rank_ic.mean > 0 else 'neg' }}">
+          {{ '%+.4f'|format(sm.rank_ic.mean) if sm.rank_ic and sm.rank_ic.mean is not none else 'NaN' }}</div></div>
+    </div>
+    <div class="flex" style="margin-top:9px; font-size:12px; color:var(--muted);">
+      <span>ICIR <b>{{ '%.3f'|format(sm.rank_ic.icir) if sm.rank_ic and sm.rank_ic.icir is not none else '—' }}</b></span>
+      <span>t <b>{{ '%.2f'|format(sm.rank_ic.t_stat) if sm.rank_ic and sm.rank_ic.t_stat is not none else '—' }}</b></span>
+      <span>覆盖 <b>{{ '%.0f%%'|format(sm.coverage_mean*100) if sm.coverage_mean is not none else '—' }}</b></span>
+      <span>有效资产 <b>{{ '%.0f'|format(sm.n_valid_mean) if sm.n_valid_mean is not none else '—' }}</b></span>
+    </div>
+    <div class="muted" style="margin-top:7px; font-size:12px;">
+      分层价差 <b>{{ '%+.5f'|format(qs.spread_mean) if qs.spread_mean is not none else 'NaN' }}</b> ·
+      单调性 <b>{{ '%.2f'|format(qs.monotonicity_spearman) if qs.monotonicity_spearman is not none else 'NaN' }}</b>
+      {% if ln.long_short_spread and ln.long_short_spread.final_ratio %}
+      · 最高/最低层期末 <b>{{ '%.4f'|format(ln.long_short_spread.final_ratio) }}</b>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- ==================== 分层净值（与策略页共用同一块） ==================== -->
+{% include "_layered_block.html" with context %}
+
+<!-- ==================== IC 时序 / 分布 / 因子值 ==================== -->
+<h2>IC / RankIC 时序</h2>
+<div class="toolbar" style="margin-bottom:10px;">
+  <label class="muted">持有期 h</label>
+  <select id="hSel">{% for h in diag.keys()|list|sort %}<option value="{{ h }}">h = {{ h }} 交易日</option>{% endfor %}</select>
+  <label class="muted">指标</label>
+  <select id="mSel">
+    <option value="rank_ic">RankIC（Spearman 秩相关）</option>
+    <option value="ic">IC（{{ sp.ic_method }}）</option>
+  </select>
+</div>
+<div id="icChart" class="chart" style="height:320px;"></div>
+<div class="chart-note">粗线为 20 日滚动均值（主要读数），浅灰细线为日值。样本不足或常数截面当日为空缺（不填 0），折线存在断点。</div>
+
+<h2>IC 分布与因子值样本</h2>
+<div class="grid2" style="align-items:start;">
+  <div><div id="icHist" class="chart" style="height:280px;"></div>
+    <div class="chart-note">各持有期共享同一组分箱边界，保证横向可比。</div></div>
+  <div><div id="valChart" class="chart" style="height:280px;"></div>
+    <div class="chart-note">因子原始值（前 5 只资产），缺口保持为空。预处理后的取值由上面的参数决定。</div></div>
+</div>
+
+<!-- ==================== 因子卡 ==================== -->
+<h2>因子卡</h2>
+<div class="kv">
+  <div class="k">公式 / 表达式</div><div class="mono">{{ f.expression }}</div>
+  <div class="k">研究假设</div><div>{{ f.hypothesis }}</div>
+  <div class="k">预期方向</div><div>{{ f.direction }}</div>
+  <div class="k">缺失处理</div><div>{{ f.missing_policy }}</div>
+  <div class="k">可能失效情形</div><div><ul class="ticks">{% for x in f.failure_modes_list %}<li>{{ x }}</li>{% endfor %}</ul></div>
+  <div class="k">来源任务</div><div>{% if f.algo_task_id %}<a href="/lab/tasks/{{ f.algo_task_id }}">{{ f.algo_task_id }}</a>{% else %}—{% endif %}</div>
+  <div class="k">内容哈希</div><div class="mono">#{{ f.hash_code }}</div>
+  <div class="k">创建时间</div><div class="mono">{{ f.created_at.strftime("%Y-%m-%d %H:%M") }}</div>
+  <div class="k">数据来源</div><div class="muted">{{ policy.adjustment_formula or '—' }}；
+    {{ policy.missing_policy or '' }}；停牌按原始价/成交量判定
+    {% if policy.quality %}；清洗后缺失(调整收盘) {{ policy.quality.missing_close_adj_cells }} 格{% endif %}</div>
+  <div class="k">行业 / 市值数据</div><div class="muted">
+    {% if policy.industry_data.available %}行业 PIT 覆盖 {{ '%.2f%%'|format(policy.industry_data.coverage*100) }}（{{ policy.industry_data.n_industries }} 个申万一级）{% if policy.industry_data.span %}，仅覆盖 {{ policy.industry_data.span[0] }} 起{% endif %}{% else %}行业数据不可用{% endif %}；
+    {% if policy.market_cap_data.available %}市值 {{ policy.market_cap_data.note }}{% else %}市值数据不可用，size 中性化会明确报错{% endif %}</div>
+</div>
+
+<script>
+// DIAG / charts 已在页面顶部声明（分层块需要先于本脚本执行）
+const IC_METHOD = {{ sp.ic_method|tojson }};
+const QK = {{ sp.quantile|tojson }};
+function num4(v){ return v==null ? null : Math.round(v*1e4)/1e4; }
+function roll(vals, w){
+  const out=[];
+  for (let i=0;i<vals.length;i++){
+    let s=0,n=0;
+    for (let j=Math.max(0,i-w+1); j<=i; j++){ const v=vals[j]; if(v!=null&&isFinite(v)){s+=v;n++;} }
+    out.push(n?Math.round((s/n)*1e4)/1e4:null);
+  }
+  return out;
+}
+const hKeys = Object.keys(DIAG).sort((a,b)=>a-b);
+const LAYER_COLORS = ['#1a5fb4','#3d8bd4','#94a3b8','#e08a3c','#d92b2b','#8b1a1a',
+                      '#0a7b83','#5aa0e0','#b3261e','#7a5cc0'];
+
+/* ---------- IC 时序 ---------- */
+const icChart = echarts.init(document.getElementById('icChart'));
+charts.push(icChart);
+function drawIC(){
+  const h = document.getElementById('hSel').value;
+  const m = document.getElementById('mSel').value;
+  const s = ((DIAG[h] || {}).ic_series) || {};
+  const raw = (m === 'ic' ? s.ic : s.rank_ic) || [];
+  const label = (m === 'ic' ? ('IC(' + IC_METHOD + ')') : 'RankIC') + '(h=' + h + ')';
+  icChart.setOption({
+    tooltip:{trigger:'axis', valueFormatter:v=>v==null?'—':(+v).toFixed(4)},
+    legend:{top:4, textStyle:{fontSize:11}},
+    grid:{left:56, right:24, top:46, bottom:56},
+    xAxis:{type:'category', data:s.index||[], boundaryGap:false},
+    yAxis:{type:'value', scale:true, name:'相关系数', nameTextStyle:{fontSize:11}},
+    dataZoom:[{type:'inside'},{type:'slider', height:16, bottom:8}],
+    series:[
+      {name:label+' 日值', type:'line', showSymbol:false, connectNulls:false,
+       lineStyle:{width:.8, opacity:.18, color:'#94a3b8'}, itemStyle:{color:'#94a3b8'}, data:raw.map(num4)},
+      {name:'Roll20 '+label, type:'line', showSymbol:false, connectNulls:true,
+       lineStyle:{width:2.2, color: m==='ic' ? '#1a5fb4' : '#b3261e'},
+       itemStyle:{color: m==='ic' ? '#1a5fb4' : '#b3261e'}, data:roll(raw,20)}]});
+}
+
+/* ---------- IC 分布 ---------- */
+(function(){
+  const BINS = 31, all = [];
+  hKeys.forEach(h=>(((DIAG[h]||{}).ic_series||{}).ic||[]).forEach(v=>{ if(v!=null&&isFinite(v)) all.push(v); }));
+  if (!all.length) return;
+  let lo = Math.min.apply(null, all), hi = Math.max.apply(null, all);
+  if (hi - lo < 1e-12) hi = lo + 1e-6;
+  const w = (hi-lo)/BINS;
+  const labels = Array.from({length:BINS},(_,i)=>(lo+(i+0.5)*w).toFixed(3));
+  const series = [];
+  hKeys.forEach((h,i)=>{
+    const v = (((DIAG[h]||{}).ic_series||{}).ic||[]).filter(x=>x!=null&&isFinite(x));
+    if (!v.length) return;
+    const counts = new Array(BINS).fill(0);
+    v.forEach(x=>{ let k=Math.floor((x-lo)/w); if(k<0)k=0; if(k>=BINS)k=BINS-1; counts[k]++; });
+    const mean = v.reduce((a,b)=>a+b,0)/v.length;
+    series.push({name:'h='+h+' (n='+v.length+', 均值='+mean.toFixed(4)+')', type:'bar',
+                 data:counts, barMaxWidth:12, itemStyle:{color:i?'#5aa0e0':'#1a5fb4'}});
+  });
+  const c = echarts.init(document.getElementById('icHist')); charts.push(c);
+  c.setOption({
+    title:{text:'IC 分布（共享分箱 '+BINS+' 档）', textStyle:{fontSize:13}},
+    tooltip:{trigger:'axis'}, legend:{top:24, textStyle:{fontSize:11}},
+    grid:{left:48, right:16, top:70, bottom:44},
+    xAxis:{type:'category', data:labels, name:'IC 区间中心', nameTextStyle:{fontSize:11},
+           axisLabel:{fontSize:10, interval:4}},
+    yAxis:{type:'value', name:'天数', nameTextStyle:{fontSize:11}}, series});
+})();
+
+/* ---------- 因子值样本 ---------- */
+fetch('/api/factors/{{ f.id }}/series').then(r=>{
+  if (!r.ok) throw new Error('HTTP '+r.status);
+  return r.json();
+}).then(d=>{
+  const vc = echarts.init(document.getElementById('valChart')); charts.push(vc);
+  const series = Object.entries(d.values_sample.series).slice(0,5).map(([name, vals])=>({
+    name, type:'line', showSymbol:false, connectNulls:false, data:vals.map(num4)}));
+  vc.setOption({
+    tooltip:{trigger:'axis', valueFormatter:v=>v==null?'—':(+v).toFixed(4)},
+    legend:{top:4}, grid:{left:66, right:24, top:44, bottom:56},
+    xAxis:{type:'category', data:d.values_sample.index, boundaryGap:false},
+    yAxis:{type:'value', scale:true, name:'因子原始值', nameTextStyle:{fontSize:11}},
+    dataZoom:[{type:'inside'},{type:'slider', height:16, bottom:8}], series});
+}).catch(e=>{
+  const el = document.getElementById('valChart');
+  if (el) el.innerHTML = '<div class="muted" style="padding:14px;">因子值样本加载失败：' + e.message + '</div>';
+});
+
+document.getElementById('hSel').addEventListener('change', drawIC);
+document.getElementById('mSel').addEventListener('change', drawIC);
+drawIC();
+window.addEventListener('resize', ()=>charts.forEach(c=>c && c.resize()));
+
+/* ---------- 换池警告 ---------- */
+const poolSel = document.querySelector('select[name="pool_id"]');
+const warnBox = document.getElementById('warnBox');
+const warnText = document.getElementById('warnText');
+const confirmBox = document.getElementById('confirmBox');
+const saveBtn = document.getElementById('saveBtn');
+const CUR_POOL = "{{ f.pool_id if f.pool_id is not none else '' }}";
+let pendingChange = false;
+function syncSave(){ saveBtn.disabled = pendingChange && !(confirmBox && confirmBox.checked); }
+async function checkPool(){
+  const pid = poolSel.value;
+  if (String(pid) === String(CUR_POOL)) {
+    pendingChange = false; warnBox.style.display = 'none'; syncSave(); return;
+  }
+  try {
+    const j = await (await fetch('/api/factors/{{ f.id }}/pool-impact?pool_id=' + pid)).json();
+    pendingChange = true; warnBox.style.display = 'block';
+    warnText.innerHTML = '股票池：<b>' + j.from_note + '</b> → <b>' + j.to_note + '</b><br>'
+      + '资产数 ' + j.from_codes + ' → ' + j.to_codes
+      + '；池内有效格子 ' + (j.from_cells==null?'—':j.from_cells.toLocaleString())
+      + ' → ' + (j.to_cells==null?'—':j.to_cells.toLocaleString()) + '<br>' + j.warning;
+    if (confirmBox) confirmBox.checked = false;
+  } catch (e) {
+    pendingChange = true; warnBox.style.display = 'block';
+    warnText.textContent = '无法获取影响预览：' + e.message;
+  }
+  syncSave();
+}
+if (poolSel){
+  poolSel.addEventListener('change', checkPool);
+  if (confirmBox) confirmBox.addEventListener('change', syncSave);
+  syncSave();
+}
+document.getElementById('paramForm').addEventListener('submit', function(){
+  saveBtn.disabled = true; saveBtn.textContent = '正在重算…（诊断 + 分层净值）';
+});
+</script>
+{% endblock %}

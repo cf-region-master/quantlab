@@ -1,0 +1,47 @@
+# 因子卡与诊断参数（Project1 因子模块）
+# 约定方向：分数越高，预期收益越高（低波动取负号保证方向一致）
+factors:
+  mom20:
+    name: "20日动量"
+    hypothesis: "近期较强的表现可能延续（动量效应）"
+    formula: "C(t) / C(t-20) - 1"
+    fields: [close]
+    window: 20
+    direction: "分数越高，预期收益越高（近期涨幅大者看多）"
+    missing_policy: "窗口不足或价格缺失记缺失(NaN)，不填零；截面有效样本<min_samples 当日记缺失"
+    failure_modes: ["趋势反转行情失效", "拥挤交易后回撤", "高波动小样本期噪声大"]
+    operator: momentum
+    params: {window: 20}
+    preprocess: [winsorize, zscore]
+
+  rev5:
+    name: "5日反转"
+    hypothesis: "短期下跌后可能出现反弹（短期反转效应）"
+    formula: "-( C(t) / C(t-5) - 1 )"
+    fields: [close]
+    window: 5
+    direction: "取负号：分数越高=近期跌幅越大=预期反弹收益越高"
+    missing_policy: "同 mom20；负号在公式内保证统一方向"
+    failure_modes: ["强趋势延续期失效（动量主导）", "隔夜跳空不可捕捉"]
+    operator: reversal
+    params: {window: 5}
+    preprocess: [winsorize, zscore]
+
+  lowvol20:
+    name: "20日低波动"
+    hypothesis: "波动较低的资产风险调整后表现更稳（低异质波动效应）"
+    formula: "-std( r(t-19), ..., r(t) )，r 为日收益"
+    fields: [close]
+    window: 20
+    direction: "取负号：分数越高=近期波动越低=预期收益越高"
+    missing_policy: "窗口内有效收益数<windows*0.6 记缺失；不填零"
+    failure_modes: ["波动 regime 切换期失效", "与市值/流动性因子相关性高"]
+    operator: lowvol
+    params: {window: 20}
+    preprocess: [winsorize, zscore]
+
+diagnosis:
+  horizon_days: [5, 20]          # 持有期 h（形成日 t，收益 C(t+h)/C(t)-1）
+  min_cross_section_samples: 10  # 事先设定的最低样本要求；不足记缺失，不改成 0
+  quantile_groups: 5             # 分组数 K（形成日按因子升序分 K 组，第1组最低）
+  winsorize_pct: 0.01            # 截面去极值分位（诊断用原始因子值；策略信号用预处理后）

@@ -1,0 +1,46 @@
+﻿{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>股票池</h1>
+    <p class="lead">指数池为逐日 PIT 成分，非静态快照。</p>
+  </div>
+</div>
+
+<div class="metrics" style="margin-top:14px;">
+  <div class="card"><div class="k">股票池数</div><div class="v">{{ pools|length }}</div>
+    <div class="n">内置池在服务启动时自动补齐</div></div>
+  <div class="card"><div class="k">本地行情覆盖</div><div class="v">{{ pools[0].n_codes_ever if pools else 0 }}</div>
+    <div class="n">历史上出现过的资产数（最大池）</div></div>
+</div>
+
+<h2>全部股票池</h2>
+<div class="table-wrap">
+<table class="grid">
+  <tr>
+    <th>ID</th><th>名称</th><th>类型</th><th>说明</th>
+    <th class="num">现有成分</th><th class="num">历史出现</th><th class="num">平均成分数</th><th></th>
+  </tr>
+  {% for p in pools %}
+  <tr>
+    <td>{{ p.id }}</td>
+    <td><a href="/pools/{{ p.id }}"><b>{{ p.name }}</b></a></td>
+    <td>
+      {% if p.kind == 'index' %}<span class="badge builtin">动态 PIT 指数</span>
+      {% elif p.kind == 'all' %}<span class="badge gp">全市场</span>
+      {% else %}<span class="badge user">静态列表</span>{% endif %}
+    </td>
+    <td class="muted">{{ p.note or p.description }}</td>
+    <td class="num">{{ p.n_codes_today }}</td>
+    <td class="num">{{ p.n_codes_ever }}</td>
+    <td class="num">{{ '%.0f'|format(p.avg_members) }}</td>
+    <td><a class="btn ghost" style="padding:5px 12px;font-size:13px;" href="/pools/{{ p.id }}">看成分与走势 →</a></td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+<div class="chart-note">
+  指数代码：csi300 = 沪深300、csi500 = 中证500、csi1000 = 中证1000。
+  「池中另有股票缺本地行情」的情况会在池详情页明确列出，不会静默当成在池内。
+</div>
+{% endblock %}

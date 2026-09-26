@@ -1,0 +1,23 @@
+pandas>=2.2
+numpy>=1.26
+scipy>=1.11
+pyyaml>=6
+sqlalchemy>=2.0
+# >=20 是硬下界：19.0.0 作为 reader 有 bug，读本仓库随附的 Parquet 会报
+# "Repetition level histogram size mismatch"（数据由 pandas 3.x 环境生成）
+pyarrow>=20
+# 数据源（scripts/fetch_data_tushare.py / fetch_daily_basic.py 必需）
+tushare>=1.4
+fastapi>=0.110
+uvicorn>=0.29
+jinja2>=3.1
+python-multipart>=0.0.9
+fpdf2>=2.7
+matplotlib>=3.8
+# 备用数据源（scripts/fetch_data.py）；主源用 tushare，不装也能跑
+akshare>=1.14
+# 算法实验室 AlphaGen-RL 引擎（CPU）
+torch>=2.0
+sb3-contrib>=2.0
+pytest>=8
+httpx>=0.27

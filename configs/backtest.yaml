@@ -1,0 +1,46 @@
+# 回测配置（Project1 回测模块）——参数改变后可重新运行
+name: base
+initial_cash: 1000000       # 初始资金（元）。用真实规模跑，整手约束与费用才有意义；
+                            # 报告中的净值曲线在展示时归一到 1.0
+sample:
+  start: "2022-07-01"   # 留出前 20 日窗口给因子预热
+  end: "2025-12-31"
+
+signal:
+  type: factor            # factor | composite
+  factor: mom20
+  preprocess: [winsorize, zscore]   # 只影响排序信号，诊断口径另见 factors.yaml
+
+rebalance:
+  freq: weekly            # weekly | monthly | every_h
+  # h: 10                # freq=every_h 时生效
+
+portfolio:
+  top_n: 10
+  weighting: equal_weight   # equal_weight | signal_prop | rank_prop（真正生效，不再是被忽略的配置）
+  target_exposure: 0.98     # 目标仓位合计；留现金缓冲。该缓冲是常数，不随费率变化，
+                            # 因此不会让"毛/净"两条路径分叉
+  lot_size: 100             # A 股整手（买入向下取整）；0 = 不建模整手约束
+
+cost:
+  commission_buy: 0.0015    # c_b：按实际买入成交金额
+  commission_sell: 0.0015   # c_s：按实际卖出成交金额
+  slippage: 0.0             # 可选：买卖价冲击比例
+
+execution:
+  price: open_adj           # t日收盘算信号，t+1日开盘价成交（避免前视）
+  fractional_shares: true   # 允许分数股（整手约束未建模，见局限）
+
+data_handling:
+  suspend: skip_and_log     # 停牌（volume=0 或缺失）当日不可成交，顺延不补
+  missing_price: skip_and_log
+  delisted_or_frozen: freeze_last_price  # 无价日按最后有效收盘估值
+
+benchmark: "000300"
+
+# 股票池：每日只在该池内选股。这里用三指数【逐日 PIT 成分】——
+# 不施加该掩码，回测会从全部已抓取资产（含当日非成分、未上市边缘的小盘股）里挑，
+# 结果会被极小市值标的支配（实测 MDD 可达 87%，属真实结果而非 bug）。
+pool:
+  kind: index
+  indices: [csi300, csi500, csi1000]

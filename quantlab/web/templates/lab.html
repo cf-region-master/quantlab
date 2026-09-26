@@ -1,0 +1,352 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>算法实验室</h1>
+    <p class="lead">挖掘算法以插件注册。目标两类：<code>factor_mining</code>（产出因子候选 → 一键导入因子库）、
+      <code>signal_generation</code>（直接输出交易信号，P2）。泛化纪律：train/valid/test 三段隔离，
+      段末按持有期 purge，候选同时报告三段 IC（诚实展示，不按 test 择优）。</p>
+  </div>
+</div>
+
+<h2>可用引擎</h2>
+<div class="cards">
+  {% for e in engines %}
+  <div class="card {{ 'accent' if not e.status else '' }}">
+    <div class="k">{{ e.display_name }}
+      <span class="badge {{ 'gp' if e.engine_id=='gp_daily' else 'builtin' }}">{{ e.engine_id }}</span>
+      {% if e.status %}<span class="pill">离线适配</span>{% else %}<span class="pill on">可用</span>{% endif %}</div>
+    <div class="n" style="margin-top:6px;">{{ e.algorithm }}</div>
+    <div class="n">目标：{{ e.objective }} · 资源：{{ e.resource }}</div>
+    {% if e.note %}<div class="n">{{ e.note }}</div>{% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+<h2>新建挖掘任务</h2>
+<form class="panel" id="taskForm">
+  <div><label>引擎</label>
+    <select name="engine_id" id="engineSel">
+      {% for e in engines %}{% if e.status == 'ready' %}
+      <option value="{{ e.engine_id }}" data-schema="{{ e.engine_id }}">{{ e.display_name }}</option>
+      {% endif %}{% endfor %}
+    </select></div>
+
+  <div>
+    <label>算法参数</label>
+    <div class="grid3" id="paramBox"></div>
+  </div>
+
+  <div>
+    <label>因子计算参数（决定挖出来的因子按什么口径入库）</label>
+    <table class="param-table">
+      <tr>
+        <td class="pname"><span class="zh">股票池</span><span class="code">pool_id</span></td>
+        <td class="pedit"><div class="ctl">
+          <select name="pool_id">
+            {% for p in pools %}
+            <option value="{{ '' if p.kind == 'all' else p.id }}">
+              {{ p.name }}{% if p.kind == 'index' %}（PIT 动态）{% endif %}</option>
+            {% endfor %}
+          </select>
+          <span class="lbl">池外整格置 NaN，逐日生效</span>
+        </div></td>
+      </tr>
+      <tr>
+        <td class="pname"><span class="zh">计算区间</span><span class="code">start_date ~ end_date</span></td>
+        <td class="pedit"><div class="ctl">
+          <input type="date" name="start_date" value="{{ data_start }}" min="{{ data_start }}" max="{{ data_end }}">
+          <span class="lbl">~</span>
+          <input type="date" name="end_date" value="{{ data_end }}" min="{{ data_start }}" max="{{ data_end }}">
+          <span class="lbl">本地行情 {{ data_start }} ~ {{ data_end }}</span>
+        </div></td>
+      </tr>
+      <tr>
+        <td class="pname"><span class="zh">复权方式</span><span class="code">spec.adjust</span></td>
+        <td class="pedit"><div class="ctl">
+          <select name="spec_adjust">
+            {% for k, v in spec_schema.evaluation.adjust.choices.items() %}
+            <option value="{{ k }}" {% if k == 'hfq' %}selected{% endif %}>{{ v }}</option>
+            {% endfor %}
+          </select></div></td>
+      </tr>
+      <tr>
+        <td class="pname"><span class="zh">缺失值填补</span><span class="code">spec.fillna_method</span></td>
+        <td class="pedit"><div class="ctl">
+          <select name="spec_fillna_method">
+            {% for k, v in spec_schema.fillna.method.choices.items() %}
+            <option value="{{ k }}" {% if k == 'none' %}selected{% endif %}>{{ v }}</option>
+            {% endfor %}
+          </select>
+          <span class="lbl">最长天数</span>
+          <input type="number" class="mini" name="spec_fillna_limit" value="0" min="0" max="250">
+        </div></td>
+      </tr>
+      <tr>
+        <td class="pname"><span class="zh">去极值</span><span class="code">spec.outlier_method</span></td>
+        <td class="pedit"><div class="ctl">
+          <select name="spec_outlier_method">
+            {% for k, v in spec_schema.outlier.method.choices.items() %}
+            <option value="{{ k }}" {% if k == 'percentile' %}selected{% endif %}>{{ v }}</option>
+            {% endfor %}
+          </select>
+          <span class="lbl">alpha</span>
+          <input type="number" class="mini" name="spec_alpha" value="0.01" min="0" max="0.5" step="0.001">
+          <span class="lbl">k</span>
+          <input type="number" class="mini" name="spec_k" value="3" min="0.5" max="10" step="0.1">
+        </div></td>
+      </tr>
+      <tr>
+        <td class="pname"><span class="zh">标准化</span><span class="code">spec.normalize_method</span></td>
+        <td class="pedit"><div class="ctl">
+          <select name="spec_normalize_method">
+            {% for k, v in spec_schema.normalize.method.choices.items() %}
+            <option value="{{ k }}" {% if k == 'z_score' %}selected{% endif %}>{{ v }}</option>
+            {% endfor %}
+          </select>
+          <span class="lbl">最低截面样本</span>
+          <input type="number" class="mini" name="spec_min_n" value="10" min="3" max="500">
+        </div></td>
+      </tr>
+      <tr>
+        <td class="pname"><span class="zh">中性化</span><span class="code">spec.neutralize_method</span></td>
+        <td class="pedit"><div class="ctl">
+          <select name="spec_neutralize_method">
+            {% for k, v in spec_schema.neutralize.method.choices.items() %}
+            <option value="{{ k }}" {% if k == 'none' %}selected{% endif %}>{{ v }}</option>
+            {% endfor %}
+          </select>
+          <select name="spec_neutralize_level" style="flex:0 0 130px;">
+            {% for k, v in spec_schema.neutralize.level.choices.items() %}
+            <option value="{{ k }}" {% if k == 'sw1' %}selected{% endif %}>{{ v }}</option>
+            {% endfor %}
+          </select>
+          <span class="lbl">min_n</span>
+          <input type="number" class="mini" name="spec_neutralize_min_n" value="5" min="2" max="200">
+        </div></td>
+      </tr>
+      <tr>
+        <td class="pname"><span class="zh">IC 口径 / 分层组数</span><span class="code">spec.ic_method / quantile</span></td>
+        <td class="pedit"><div class="ctl">
+          <select name="spec_ic_method" style="flex:0 0 150px;">
+            {% for k, v in spec_schema.ic.method.choices.items() %}
+            <option value="{{ k }}" {% if k == 'pearson' %}selected{% endif %}>{{ v }}</option>
+            {% endfor %}
+          </select>
+          <span class="lbl">分层 K</span>
+          <input type="number" class="mini" name="spec_quantile" value="5" min="2" max="20">
+          <span class="lbl">持有期 h 由上面的训练目标决定（只有一个）</span>
+        </div></td>
+      </tr>
+      <tr>
+        <td class="pname"><span class="zh">三段切分</span><span class="code">split_mode / bounds</span></td>
+        <td class="pedit">
+          <div class="ctl">
+            <select name="split_mode" id="splitMode" style="flex:0 0 190px;">
+              <option value="ratio">按比例自动分</option>
+              <option value="dates">自己指定三个区间</option>
+            </select>
+            <span class="lbl" id="ratioHint">训练 / 验证比例在上面的算法参数里（train_ratio / valid_ratio）</span>
+          </div>
+          <div id="dateBox" style="display:none; margin-top:8px;">
+            <table class="param-table" style="box-shadow:none;">
+              <tr><th style="width:150px;">段</th><th>起</th><th>止</th></tr>
+              <tr>
+                <td class="pname"><span class="zh">训练段</span>
+                  <span class="code">搜索 / 拟合只看这段</span></td>
+                <td><input type="date" name="train_start" value="{{ data_start }}" min="{{ data_start }}" max="{{ data_end }}"></td>
+                <td><input type="date" name="train_end" value="{{ data_start }}" min="{{ data_start }}" max="{{ data_end }}"></td>
+              </tr>
+              <tr>
+                <td class="pname"><span class="zh">验证段</span>
+                  <span class="code">不参与搜索，仅作对照</span></td>
+                <td><input type="date" name="valid_start" value="{{ data_start }}" min="{{ data_start }}" max="{{ data_end }}"></td>
+                <td><input type="date" name="valid_end" value="{{ data_start }}" min="{{ data_start }}" max="{{ data_end }}"></td>
+              </tr>
+              <tr>
+                <td class="pname"><span class="zh">测试段</span>
+                  <span class="code">完全留出，最终一次性检验</span></td>
+                <td><input type="date" name="test_start" value="{{ data_start }}" min="{{ data_start }}" max="{{ data_end }}"></td>
+                <td><input type="date" name="test_end" value="{{ data_end }}" min="{{ data_start }}" max="{{ data_end }}"></td>
+              </tr>
+            </table>
+            <div class="form-hint">
+              必须满足 训练止 &lt; 验证起 ≤ 验证止 &lt; 测试起。每段末尾会再按持有期 h 天
+              purge（标签会用到 t+h 的价格），因此实际可用的末尾比这里填的早 h 天。
+            </div>
+          </div>
+        </td>
+      </tr>
+    </table>
+    <div class="form-hint">
+      任务成功后因子池自动入库（<b>隐藏</b>）并落成一个带学习权重的策略。
+    </div>
+  </div>
+
+  <div class="form-hint" id="engineHint"></div>
+  <div class="flex">
+    <button class="btn" type="submit">提交任务</button>
+    <span class="muted" style="font-size:12.5px;" id="memoNote"></span>
+    <button class="btn ghost" type="button" id="resetBtn" style="padding:7px 14px;font-size:13px;">
+      全部恢复默认</button>
+  </div>
+</form>
+
+<h2>任务列表</h2>
+{% if tasks %}
+<div class="table-wrap">
+<table class="grid">
+  <tr><th>任务ID</th><th>引擎</th><th>目标</th><th>状态</th><th class="num">进度</th><th class="num">候选数</th><th>创建时间</th></tr>
+  {% for t in tasks %}
+  <tr class="rowlink" onclick="location='/lab/tasks/{{ t.id }}'">
+    <td><a class="rowlink-a mono" href="/lab/tasks/{{ t.id }}"><b>{{ t.id }}</b></a></td>
+    <td class="mono">{{ t.engine }}</td><td class="mono">{{ t.objective }}</td>
+    <td><span class="status {{ t.status }}">{{ t.status }}</span></td>
+    <td class="num">{{ '%.0f%%'|format(t.progress*100) }}</td>
+    <td class="num">{{ cand_counts.get(t.id, 0) }}</td>
+    <td class="mono">{{ t.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% else %}
+<div class="empty">尚无挖掘任务。上方填写参数即可提交。</div>
+{% endif %}
+
+<script>
+const SCHEMAS = {
+  gp_daily: {{ schema|tojson }},
+  alphagen_daily_cpu: {{ ag_schema|tojson }},
+};
+const ENGINE_HINTS = {
+  gp_daily: '符号回归：种群进化 + 锦标赛选择 + 子树交叉/变异，适应度=训练段 RankIC。CPU 进程内运行，秒级完成。',
+  alphagen_daily_cpu: 'AlphaGen-RL：GRU 逐 token 生成表达式树（MaskablePPO），奖励=线性因子池 ensemble IC。CPU 实测约 2~4 万步/分钟；候选会被转译为沙箱 Python 源码后入库。',
+};
+const sel = document.getElementById('engineSel');
+const box = document.getElementById('paramBox');
+const hint = document.getElementById('engineHint');
+const form = document.getElementById('taskForm');
+const splitMode = document.getElementById('splitMode');
+const dateBox = document.getElementById('dateBox');
+const ratioHint = document.getElementById('ratioHint');
+
+/* 表单初始值（服务端渲染的默认值）："全部恢复默认"要回到这里，
+   所以必须在套用记忆化之前抓下来。 */
+const INITIAL = {};
+new FormData(form).forEach((v, k) => { INITIAL[k] = v; });
+
+/* ---------- 记忆化：上次填过的参数作为默认值 ---------- */
+const LAST = {{ last|tojson }};              // {common:{...}, by_engine:{...}, from_task:"..."}
+const COMMON = Object.assign({}, LAST.common || {});
+const BY_ENGINE = Object.assign({}, LAST.by_engine || {});
+const SPEC_KEYS = ['adjust','fillna_method','fillna_limit','outlier_method','alpha','k',
+                   'normalize_method','min_n','neutralize_method','neutralize_level',
+                   'neutralize_min_n','ic_method','quantile'];
+const BOUND_KEYS = ['train_start','train_end','valid_start','valid_end','test_start','test_end'];
+
+function syncSplit(){
+  const byDates = splitMode.value === 'dates';
+  dateBox.style.display = byDates ? 'block' : 'none';
+  ratioHint.textContent = byDates
+    ? '按下面填的三个区间切；每段末尾再按持有期 h 天 purge'
+    : '训练 / 验证比例在上面的算法参数里（train_ratio / valid_ratio）';
+}
+function setField(name, val){
+  const el = form.elements[name];
+  if (el && val !== undefined && val !== null && val !== '') el.value = val;
+}
+function applyCommon(){
+  const sp = COMMON.spec || {};
+  SPEC_KEYS.forEach(k => setField('spec_' + k, sp[k]));
+  setField('pool_id', COMMON.pool_id === null || COMMON.pool_id === undefined
+                      ? '' : String(COMMON.pool_id));
+  setField('start_date', COMMON.start_date);
+  setField('end_date', COMMON.end_date);
+  setField('split_mode', COMMON.split_mode || 'ratio');
+  BOUND_KEYS.forEach(k => setField(k, COMMON[k]));
+}
+function memoActive(){
+  return Object.keys(COMMON).length > 0
+      || Object.keys(BY_ENGINE[sel.value] || {}).length > 0;
+}
+function updateMemoNote(){
+  document.getElementById('memoNote').textContent = (memoActive() && LAST.from_task)
+    ? ('已按上次任务 ' + LAST.from_task + ' 的参数预填，可直接改')
+    : '按默认值预填';
+}
+function renderParams(){
+  const sch = SCHEMAS[sel.value] || {};
+  const last = BY_ENGINE[sel.value] || {};            // 该引擎上次的算法参数
+  box.innerHTML = Object.entries(sch).map(([k, s]) => {
+    const v = (last[k] !== undefined && last[k] !== null) ? last[k] : s.default;
+    if (s.choices) {
+      return '<div><label>' + s.label + '（' + k + '）</label><select name="' + k + '">'
+        + s.choices.map(c => '<option value="' + c + '"'
+            + (String(c) === String(v) ? ' selected' : '') + '>' + c + '</option>').join('')
+        + '</select></div>';
+    }
+    const step = s.type === 'float' ? '0.01' : '1';
+    const min = (s.min === undefined ? '' : ' min="' + s.min + '"');
+    const max = (s.max === undefined ? '' : ' max="' + s.max + '"');
+    return '<div><label>' + s.label + '（' + k + '）</label>'
+      + '<input name="' + k + '" type="number" step="' + step + '" value="' + v + '"' + min + max + '></div>';
+  }).join('');
+  hint.textContent = ENGINE_HINTS[sel.value] || '';
+  applyCommon();
+  syncSplit();
+  updateMemoNote();
+}
+function restoreAllDefaults(){
+  Object.keys(COMMON).forEach(k => delete COMMON[k]);
+  Object.keys(BY_ENGINE).forEach(k => delete BY_ENGINE[k]);
+  // 公共字段回服务端渲染的初始值（含 spec_* / 池 / 区间 / 三段边界）
+  Object.keys(INITIAL).forEach(k => { if (form.elements[k]) form.elements[k].value = INITIAL[k]; });
+  renderParams();
+}
+sel.addEventListener('change', renderParams);
+splitMode.addEventListener('change', syncSplit);
+document.getElementById('resetBtn').addEventListener('click', restoreAllDefaults);
+renderParams();
+
+document.getElementById('taskForm').addEventListener('submit', async (ev)=>{
+  ev.preventDefault();
+  const fd = new FormData(ev.target);
+  const payload = {engine_id: fd.get('engine_id')};
+  const sch = SCHEMAS[payload.engine_id] || {};
+  const spec = {};
+  fd.forEach((v,k)=>{
+    if (k === 'engine_id') return;
+    if (k === 'pool_id' || k === 'start_date' || k === 'end_date' || k === 'split_mode'
+        || k.startsWith('train_') || k.startsWith('valid_') || k.startsWith('test_')){
+      // 计算范围 + 三段边界（任务级，不进 spec）；比例模式下不提交日期
+      if (k === 'split_mode' || document.getElementById('splitMode').value === 'dates'){
+        payload[k] = v;
+      }
+      return;
+    }
+    if (k.startsWith('spec_')){                 // 因子计算参数 -> spec 子对象
+      spec[k.slice(5)] = (v === '' ? '' : (isNaN(+v) ? String(v) : +v));
+      return;
+    }
+    payload[k] = (sch[k] && sch[k].type === 'str') ? String(v) : parseFloat(v);
+  });
+  payload.spec = spec;
+  if (document.getElementById('splitMode').value !== 'dates') {
+    delete payload.train_start; delete payload.train_end;
+    delete payload.valid_start; delete payload.valid_end;
+    delete payload.test_start; delete payload.test_end;
+  }
+  const btn = ev.target.querySelector('button[type=submit]');
+  btn.disabled = true; btn.textContent = '提交中 …';
+  try {
+    const r = await fetch('/lab/tasks', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    if (r.status === 202) { const j = await r.json(); location = '/lab/tasks/'+j.task_id; return; }
+    alert('创建失败：' + await r.text());
+  } catch (e) {
+    alert('创建失败：' + e.message);
+  }
+  btn.disabled = false; btn.textContent = '提交任务';
+});
+</script>
+{% endblock %}

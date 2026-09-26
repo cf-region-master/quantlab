@@ -1,0 +1,48 @@
+﻿{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>平台总览</h1>
+    <p class="lead">数据、因子、策略、回测与算法实验室。</p>
+  </div>
+</div>
+
+<div class="metrics" style="margin-top:14px;">
+  <div class="card"><div class="k">因子库</div><div class="v">{{ n_factors }}</div><div class="n">内置 + GP 采纳 + 手写</div></div>
+  <div class="card"><div class="k">信号（策略）</div><div class="v">{{ n_strategies }}</div><div class="n">可诊断、可反复回测</div></div>
+  <div class="card"><div class="k">回测记录</div><div class="v">{{ n_backtests }}</div><div class="n">同一信号可跑多次</div></div>
+  <div class="card"><div class="k">算法任务</div><div class="v">{{ n_tasks }}</div><div class="n">GP / AlphaGen 挖掘</div></div>
+</div>
+
+<h2>数据快照</h2>
+{% if data %}
+<div class="metrics">
+  <div class="card"><div class="k">资产数</div><div class="v">{{ data.n_assets_cleaned }}</div>
+    <div class="n">{{ data.date_range[0] }} ~ {{ data.date_range[1] }}</div></div>
+  <div class="card"><div class="k">交易日</div><div class="v">{{ data.n_trading_days }}</div></div>
+  <div class="card"><div class="k">清洗前后行数</div><div class="v">{{ data.rows_raw_total }} → {{ data.rows_in_window_total }}</div>
+    <div class="n">重复键 {{ data.duplicate_dates_dropped_total }} · 非法值 {{ data.illegal_total.values()|sum }}</div></div>
+  <div class="card"><div class="k">缺失（调整收盘）</div><div class="v">{{ data.missing_close_adj_cells }} 格</div>
+    <div class="n">未填零 · 覆盖率均值 {{ (data.coverage_mean*100)|round(1) }}%</div></div>
+</div>
+{% else %}
+<div class="empty">数据未就绪：请先运行 <code>python scripts/fetch_data_tushare.py</code> 与
+  <code>python scripts/run_pipeline.py</code>。</div>
+{% endif %}
+
+<h2>工作流</h2>
+<div class="cards">
+  <div class="card accent"><div class="k">① 因子库</div>
+    <div class="n">因子卡 + IC/RankIC + 分层收益 + IC 分布；支持内置 / GP 采纳 / 手写代码；每个因子带计算区间与股票池。</div>
+    <p><a href="/factors">进入 →</a></p></div>
+  <div class="card accent"><div class="k">② 策略（信号）</div>
+    <div class="n">选因子 × 组合模型（等权 / IC 加权 / 线性 / 决策树）→ 信号；信号自带与因子库同口径的诊断。</div>
+    <p><a href="/signals">进入 →</a></p></div>
+  <div class="card accent"><div class="k">③ 回测</div>
+    <div class="n">选信号 + 时间区间 + 动态股票池 + 购买权重 + 费率滑点 → 模拟成交；同一信号可反复回测对照。</div>
+    <p><a href="/backtests">进入 →</a></p></div>
+  <div class="card accent"><div class="k">④ 算法实验室</div>
+    <div class="n">GP 遗传编程 / AlphaGen-RL 挖因子候选，三段隔离（段末按持有期 purge），一键导入因子库。</div>
+    <p><a href="/lab">进入 →</a></p></div>
+</div>
+{% endblock %}

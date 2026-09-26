@@ -1,0 +1,311 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>因子库</h1>
+    <p class="lead">方向约定：<b>分数越高，预期收益越高</b>。点因子名看参数与图表。</p>
+  </div>
+  <div class="toolbar">
+    <a class="btn" href="/factors/new">＋ 手写因子</a>
+    <a class="btn ghost" href="/lab">去算法实验室挖掘 →</a>
+  </div>
+</div>
+
+<div class="metrics" style="margin-top:14px;">
+  <div class="card"><div class="k">已注册因子</div><div class="v">{{ rows|length }}</div>
+    <div class="n">内置 {{ rows|selectattr('f.source','equalto','builtin')|list|length }} · GP 采纳 {{ rows|selectattr('f.source','equalto','gp')|list|length }} · 手写 {{ rows|selectattr('f.source','equalto','user')|list|length }}{% if n_hidden %} · 隐藏 {{ n_hidden }}{% endif %}</div></div>
+  <div class="card"><div class="k">诊断持有期</div><div class="v">5 / 20</div><div class="n">交易日</div></div>
+  <div class="card"><div class="k">当前显示</div><div class="v" id="visCount">{{ rows|length }}</div><div class="n" id="visNote">全部</div></div>
+</div>
+
+<h2>全部因子</h2>
+{% if n_hidden %}
+<div class="quote-bar" style="margin-bottom:10px;">
+  <span class="muted" style="font-size:12.5px;">
+    另有 <b>{{ n_hidden }}</b> 个隐藏因子（挖掘任务因子池自动入库，已被策略引用）
+  </span>
+  <a class="btn ghost" style="padding:6px 13px;font-size:13px;"
+     href="/factors{{ '' if show_hidden else '?show_hidden=1' }}">
+    {{ '隐藏它们' if show_hidden else '显示隐藏因子' }}</a>
+</div>
+{% endif %}
+{% if rows %}
+<div class="quote-bar" style="margin-bottom:10px;">
+  <input type="search" id="qBox" placeholder="搜名称 / 公式 / 来源 / ID">
+  <select id="srcSel">
+    <option value="">全部来源</option>
+    <option value="builtin">builtin 内置</option>
+    <option value="gp">gp 挖掘</option>
+    <option value="user">user 手写</option>
+  </select>
+  <span class="muted" style="font-size:12.5px;">点表头排序</span>
+  <span class="spacer"></span>
+  <button class="btn ghost" type="button" id="resetBtn" style="padding:7px 14px;font-size:13px;">重置</button>
+</div>
+
+<form method="post" id="batchForm">
+<div class="table-wrap">
+<table class="grid" id="facTable">
+  <thead>
+  <tr>
+    <th style="width:34px;"><input type="checkbox" id="allBox" title="全选/全不选"></th>
+    <th class="sortable" data-k="id" data-t="num">ID</th>
+    <th class="sortable" data-k="name" data-t="str">名称</th>
+    <th class="sortable" data-k="source" data-t="str">来源</th>
+    <th data-k="expr" style="cursor:default;">公式 / 表达式</th>
+    <th class="num sortable" data-k="ric5" data-t="num">RankIC(5d)</th>
+    <th class="num sortable" data-k="ric20" data-t="num">RankIC(20d)</th>
+    <th class="num sortable" data-k="icir" data-t="num">ICIR(20d)</th>
+    <th class="num sortable" data-k="cover" data-t="num">覆盖率</th>
+    <th class="num sortable" data-k="spread" data-t="num">分层价差(20d)</th>
+    <th class="num sortable" data-k="mono" data-t="num">单调性</th>
+    <th class="sortable" data-k="vstart" data-t="str">计算区间</th>
+  </tr>
+  </thead>
+  <tbody>
+  {% for r in rows %}
+  {% set v5 = r.m5.rank_ic_mean if r.m5 else none %}
+  {% set v20 = r.m20.rank_ic_mean if r.m20 else none %}
+  {% set vstart = r.f.value_start.strftime('%Y-%m-%d') if r.f.value_start else '' %}
+  {% set vend = r.f.value_end.strftime('%Y-%m-%d') if r.f.value_end else '' %}
+  <tr class="frow"
+      data-id="{{ r.f.id }}" data-name="{{ r.f.name }}" data-source="{{ r.f.source }}"
+      data-expr="{{ r.f.expression|e }}"
+      data-ric5="{{ v5 if v5 is not none else '' }}"
+      data-ric20="{{ v20 if v20 is not none else '' }}"
+      data-icir="{{ r.m20.icir if r.m20 and r.m20.icir is not none else '' }}"
+      data-cover="{{ r.m20.coverage_mean if r.m20 and r.m20.coverage_mean is not none else '' }}"
+      data-spread="{{ r.m20.spread_mean if r.m20 and r.m20.spread_mean is not none else '' }}"
+      data-mono="{{ r.m20.monotonicity if r.m20 and r.m20.monotonicity is not none else '' }}"
+      data-vstart="{{ vstart }}">
+    <td><input type="checkbox" name="factor_ids" value="{{ r.f.id }}" class="rowbox"></td>
+    <td>{{ r.f.id }}</td>
+    <td><a class="rowlink-a" href="/factors/{{ r.f.id }}"><b>{{ r.f.name }}</b></a></td>
+    <td><span class="badge {{ r.f.source }}">{{ r.f.source }}</span>
+      {% if r.f.hidden %}<span class="tag">隐藏</span>{% endif %}</td>
+    <td class="mono">{{ r.f.expression[:52] }}</td>
+    <td class="num" style="{% if v5 is not none %}background:rgba({{ '19,122,58' if v5>0 else '179,38,30' }},{{ [0.05 + (v5|abs)*9, 0.30]|min }}){% endif %}">
+      {{ '%+.4f'|format(v5) if v5 is not none else '—' }}</td>
+    <td class="num" style="{% if v20 is not none %}background:rgba({{ '19,122,58' if v20>0 else '179,38,30' }},{{ [0.05 + (v20|abs)*9, 0.30]|min }}){% endif %}">
+      {{ '%+.4f'|format(v20) if v20 is not none else '—' }}</td>
+    <td class="num">{{ '%.3f'|format(r.m20.icir) if r.m20 and r.m20.icir is not none else '—' }}</td>
+    <td class="num">{{ '%.0f%%'|format(r.m20.coverage_mean*100) if r.m20 and r.m20.coverage_mean is not none else '—' }}</td>
+    <td class="num">{{ '%+.4f'|format(r.m20.spread_mean) if r.m20 and r.m20.spread_mean is not none else '—' }}</td>
+    <td class="num">{{ '%.2f'|format(r.m20.monotonicity) if r.m20 and r.m20.monotonicity is not none else '—' }}</td>
+    <td class="mono" style="font-size:12px;">{% if vstart %}{{ vstart }}<br>~ {{ vend }}{% else %}未登记{% endif %}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<!-- ============ 批量操作：先选操作，再按操作填参数 ============ -->
+<div class="batch-bar">
+  <div>
+    <label>已选因子</label>
+    <div style="padding-top:6px;"><span class="cnt" id="selCnt">0</span> <span class="muted">个</span></div>
+  </div>
+  <div>
+    <label>操作</label>
+    <select id="opSel" style="min-width:200px;">
+      <option value="">— 请选择操作 —</option>
+      <option value="refresh">重算（改区间 / 股票池）</option>
+      <option value="compose">构成策略（合成信号）</option>
+      <option value="delete">删除</option>
+    </select>
+  </div>
+
+  <!-- 重算：只填时间与股票池 -->
+  <div class="oppanel" id="op_refresh" style="display:none;">
+    <div class="flex" style="gap:14px; align-items:flex-end;">
+      <div>
+        <label>计算区间</label>
+        <select id="rangeMode" name="range_mode">
+          <option value="auto">自动（延到本地行情末端 {{ data_end }}）</option>
+          <option value="set">指定区间</option>
+        </select>
+      </div>
+      <div id="rangeBox" style="display:none;">
+        <label>起 / 止</label>
+        <div class="flex" style="gap:6px;">
+          <input type="date" name="start_date" value="{{ data_start }}" min="{{ data_start }}" max="{{ data_end }}">
+          <span class="lbl muted">~</span>
+          <input type="date" name="end_date" value="{{ data_end }}" min="{{ data_start }}" max="{{ data_end }}">
+        </div>
+      </div>
+      <div>
+        <label>股票池</label>
+        <select id="poolMode" name="pool_mode">
+          <option value="keep">保持各因子原有池</option>
+          <option value="set">统一改为</option>
+        </select>
+      </div>
+      <div id="poolBox" style="display:none;">
+        <label>目标池</label>
+        <select name="pool_id">
+          {% for p in pools %}
+          <option value="{{ '' if p.kind == 'all' else p.id }}">{{ p.name }}{% if p.kind == 'index' %}（PIT 动态）{% endif %}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <label style="display:flex;gap:6px;align-items:center;margin-top:7px;color:var(--warn);">
+      <input type="checkbox" name="confirm_pool_change" value="1" style="width:auto;">
+      <span>换池会改变截面：确认后执行</span>
+    </label>
+  </div>
+
+  <!-- 构成策略 -->
+  <div class="oppanel" id="op_compose" style="display:none;">
+    <div class="muted" style="font-size:12.5px; max-width:540px;">
+      把选中的因子带到「新建信号」页并预勾选，在那里选择组合模型（等权 / IC 加权 / 线性 / 决策树）
+      与有效区间。策略建好后可反复回测，与因子本身解耦。
+    </div>
+  </div>
+
+  <!-- 删除 -->
+  <div class="oppanel" id="op_delete" style="display:none;">
+    <div class="muted" style="font-size:12.5px; max-width:580px;">
+      <span class="neg">删除会同时移除该因子的诊断、分层净值与因子值文件。</span>
+      若因子已被某个策略当作分量使用，默认<b>拒绝删除</b>并告诉你被谁引用；
+      确需删除请勾选下面的强制项（会连带删除那些策略及其回测记录）。
+    </div>
+    <label style="display:flex;gap:6px;align-items:center;margin-top:7px;color:var(--warn);">
+      <input type="checkbox" name="force" value="1" style="width:auto;">
+      <span>强制删除，并连带删除引用它的策略与回测记录</span>
+    </label>
+  </div>
+
+  <span class="spacer"></span>
+  <button class="btn" type="submit" id="runBtn" disabled>执行</button>
+</div>
+</form>
+
+<div class="chart-note">
+  RankIC 单元格底色深浅 = |RankIC| 大小（绿=正向、红=负向）。分层价差未扣费、多日标签重叠，属描述性结果；
+  分层<b>净值曲线</b>（可复利、已扣费）在因子详情页。
+  每个因子的预处理参数与评估口径在因子详情页逐因子设置 —— 批量入口只做「区间 / 股票池」，
+  避免把不同因子的研究口径悄悄改成同一个。
+</div>
+{% else %}
+<div class="empty">因子库为空：先运行 <code>python scripts/run_pipeline.py</code>，或在 <a href="/lab">算法实验室</a> 挖掘并采纳候选。</div>
+{% endif %}
+
+<script>
+const table = document.getElementById('facTable');
+const allRows = () => Array.from(document.querySelectorAll('tr.frow'));
+const boxes = () => allRows().map(r => r.querySelector('.rowbox'));
+const allBox = document.getElementById('allBox');
+const opSel = document.getElementById('opSel');
+const runBtn = document.getElementById('runBtn');
+const form = document.getElementById('batchForm');
+
+let sortKey = 'id', sortDir = 1, op = '';
+
+/* ---------- 选中计数 ---------- */
+function syncCnt(){
+  const n = boxes().filter(b=>b.checked).length;
+  document.getElementById('selCnt').textContent = n;
+  runBtn.disabled = (n === 0 || !op);
+  if (allBox) allBox.checked = (n > 0 && n === boxes().length);
+}
+if (allBox) allBox.addEventListener('change', ()=>{ boxes().forEach(b=>b.checked = allBox.checked); syncCnt(); });
+document.addEventListener('change', e=>{ if (e.target.classList && e.target.classList.contains('rowbox')) syncCnt(); });
+
+/* ---------- 检索 + 排序 ---------- */
+function applyFilterSort(){
+  const q = document.getElementById('qBox').value.trim().toLowerCase();
+  const src = document.getElementById('srcSel').value;
+  let vis = 0;
+  allRows().forEach(r=>{
+    const hay = (r.dataset.name + ' ' + r.dataset.expr + ' ' + r.dataset.source + ' ' + r.dataset.id).toLowerCase();
+    const hit = (!q || hay.indexOf(q) >= 0) && (!src || r.dataset.source === src);
+    r.style.display = hit ? '' : 'none';
+    if (hit) vis++;
+  });
+  const tbody = table.querySelector('tbody');
+  const num = v => (v === '' || v == null) ? null : parseFloat(v);
+  allRows().sort((a,b)=>{
+    const k = sortKey;
+    const av = a.dataset[k], bv = b.dataset[k];
+    if (k === 'id') return (num(av) - num(bv)) * sortDir;
+    const an = num(av), bn = num(bv);
+    if (an != null && bn != null) return (an - bn) * sortDir;
+    if (an == null && bn != null) return 1;
+    if (an != null && bn == null) return -1;
+    return String(av).localeCompare(String(bv), 'zh') * sortDir;
+  }).forEach(r=>tbody.appendChild(r));
+  document.getElementById('visCount').textContent = vis;
+  document.getElementById('visNote').textContent =
+    (q || src) ? ('筛选中' + (q ? '：' + q : '') + (src ? '／' + src : '')) : '全部';
+  table.querySelectorAll('th.sortable').forEach(th=>{
+    const a = th.querySelector('.arrow'); if (a) a.remove();
+    if (th.dataset.k === sortKey){
+      const s = document.createElement('span'); s.className = 'arrow';
+      s.textContent = sortDir === 1 ? '▲' : '▼'; th.appendChild(s);
+    }
+  });
+}
+table.querySelectorAll('th.sortable').forEach(th=>{
+  th.title = '点击排序';
+  th.addEventListener('click', ()=>{
+    const k = th.dataset.k;
+    if (sortKey === k) sortDir = -sortDir;
+    else { sortKey = k; sortDir = (th.dataset.t === 'str' ? 1 : -1); }
+    applyFilterSort();
+  });
+});
+document.getElementById('qBox').addEventListener('input', applyFilterSort);
+document.getElementById('srcSel').addEventListener('change', applyFilterSort);
+document.getElementById('resetBtn').addEventListener('click', ()=>{
+  document.getElementById('qBox').value = ''; document.getElementById('srcSel').value = '';
+  sortKey = 'id'; sortDir = 1; applyFilterSort();
+});
+
+/* ---------- 先选操作，再填参数 ---------- */
+function showPanel(){
+  op = opSel.value;
+  ['refresh','compose','delete'].forEach(k=>{
+    const p = document.getElementById('op_' + k);
+    p.style.display = (k === op) ? 'block' : 'none';
+  });
+  // 隐藏面板里的控件必须禁用，否则会把无关参数一起提交
+  document.querySelectorAll('.oppanel').forEach(p=>{
+    const on = p.style.display !== 'none';
+    p.querySelectorAll('input, select').forEach(el=>{ el.disabled = !on; });
+  });
+  runBtn.textContent = op === 'delete' ? '删除所选因子'
+                     : op === 'compose' ? '去新建策略'
+                     : op === 'refresh' ? '重算所选因子' : '执行';
+  form.action = op === 'delete' ? '/factors/batch-delete' : '/factors/batch-refresh';
+  syncCnt();
+}
+opSel.addEventListener('change', showPanel);
+function togglePair(selId, boxId){
+  const s = document.getElementById(selId), b = document.getElementById(boxId);
+  if (!s || !b) return;
+  const upd = ()=>{ b.style.display = (s.value === 'set') ? 'block' : 'none'; };
+  s.addEventListener('change', upd); upd();
+}
+togglePair('rangeMode','rangeBox');
+togglePair('poolMode','poolBox');
+showPanel();
+
+form.addEventListener('submit', e=>{
+  const n = boxes().filter(b=>b.checked).length;
+  if (!n || !op){ e.preventDefault(); return; }
+  if (op === 'compose'){
+    e.preventDefault();
+    location = '/signals/new?factors=' + boxes().filter(b=>b.checked).map(b=>b.value).join(',');
+    return;
+  }
+  if (op === 'delete' && !confirm('确认删除所选 ' + n + ' 个因子？该操作不可撤销。')) {
+    e.preventDefault(); return;
+  }
+  // 重算/删除都提交为后台任务，随即跳到进度页，不再让浏览器空等
+  runBtn.disabled = true;
+  runBtn.textContent = '正在提交…';
+});
+applyFilterSort();
+</script>
+{% endblock %}

@@ -1,0 +1,412 @@
+﻿{% extends "base.html" %}
+{% block content %}
+<div class="crumb"><a href="/pools">股票池</a> / {{ pool.name }}</div>
+<div class="page-head">
+  <div>
+    <h1>{{ pool.name }}</h1>
+    <p class="lead">{{ ov.note }}</p>
+  </div>
+  <div class="toolbar">
+    <a class="btn ghost" href="/backtests/new">用该池跑回测 →</a>
+  </div>
+</div>
+
+<div class="quote-strip" style="margin-top:12px;">
+  <div class="q"><div class="k">现有成分</div><div class="v">{{ ov.n_codes_today }}</div></div>
+  <div class="q"><div class="k">历史出现过</div><div class="v">{{ ov.n_codes_ever }}</div></div>
+  <div class="q"><div class="k">平均成分数</div><div class="v">{{ '%.0f'|format(ov.avg_members) }}</div></div>
+  <div class="q"><div class="k">池内等权指数</div>
+    <div class="v" id="navLast">—</div>
+    <div class="k" id="navCum" style="font-size:11.5px;">—</div></div>
+  <div class="q"><div class="k">同期沪深300</div>
+    <div class="v" id="benchLast" style="color:var(--muted);">—</div>
+    <div class="k" id="benchCum" style="font-size:11.5px;">—</div></div>
+  <div class="q"><div class="k">最新交易日</div><div class="v" id="asOf">{{ date_hi }}</div>
+    <div class="k" style="font-size:11.5px;">区间 {{ date_lo }} ~ {{ date_hi }}</div></div>
+</div>
+
+<h2>池内等权走势 vs 沪深300</h2>
+<div class="grid2" style="align-items:start; grid-template-columns:minmax(0,2.1fr) minmax(0,1fr);">
+  <div>
+    <div id="navChart" class="chart" style="height:330px;"></div>
+    <div class="chart-note">{{ ov.convention }}。基准为沪深300指数点位。</div>
+  </div>
+  <div>
+    <div id="countChart" class="chart" style="height:158px; margin-bottom:12px;"></div>
+    <div id="distChart" class="chart" style="height:158px;"></div>
+    <div class="chart-note">上：逐日池内成分数（PIT 动态，会随调整变动）。
+      下：当日成分涨跌幅分布（红=涨、绿=跌，按 A 股习惯）。</div>
+  </div>
+</div>
+
+<h2>成分股行情</h2>
+<div class="quote-bar" style="margin-bottom:10px;">
+  <label class="muted" style="font-size:12.5px;">交易日</label>
+  <input type="date" id="dSel" min="{{ date_lo }}" max="{{ date_hi }}" value="{{ date_hi }}">
+  <input type="search" id="qBox" placeholder="搜代码 / 名称 / 行业">
+  <select id="indSel"><option value="">全部行业</option></select>
+  <select id="pgSize">
+    <option value="50">每页 50</option>
+    <option value="100" selected>每页 100</option>
+    <option value="300">每页 300</option>
+  </select>
+  <span class="spacer"></span>
+  <span class="muted" id="meta" style="font-size:12.5px;">加载中…</span>
+</div>
+
+{% if not has_fundamentals %}
+<div class="card bad" style="margin-bottom:10px;">
+  <div class="k neg">估值/市值字段缺失</div>
+  <div class="n" style="margin-top:5px;">{{ fund_note }}。
+    补齐后可显示 PE / PB / 总市值 / 换手率；补齐前相关单元格显示「—」，<b>不用别的字段冒充</b>。</div>
+</div>
+{% endif %}
+
+<div class="table-wrap tall">
+<table class="quotes" id="qTable">
+  <thead>
+  <tr>
+    <th class="l" data-k="code">代码</th>
+    <th class="l" data-k="name">名称</th>
+    <th class="l" data-k="industry">行业</th>
+    <th data-k="close_raw">最新价</th>
+    <th data-k="pct_chg">涨跌幅</th>
+    <th data-k="ret_5d">5日</th>
+    <th data-k="ret_20d">20日</th>
+    <th data-k="turnover_rate">换手率</th>
+    <th data-k="volume_ratio">量比</th>
+    <th data-k="amount">成交额</th>
+    <th data-k="pe_ttm">PE(TTM)</th>
+    <th data-k="pb">PB</th>
+    <th data-k="total_mv">总市值</th>
+    <th data-k="circ_mv">流通市值</th>
+    <th data-k="dv_ratio">股息率</th>
+  </tr>
+  </thead>
+  <tbody id="qBody"></tbody>
+</table>
+</div>
+<div class="quote-bar" style="margin-top:10px;">
+  <div class="pager">
+    <button id="pgFirst" type="button">« 首页</button>
+    <button id="pgPrev" type="button">‹ 上页</button>
+    <span class="pageinfo" id="pgInfo">— / —</span>
+    <button id="pgNext" type="button">下页 ›</button>
+    <button id="pgLast" type="button">末页 »</button>
+  </div>
+  <span class="spacer"></span>
+  <span class="muted" style="font-size:12.5px;">点任意一行看该股 K 线</span>
+</div>
+
+<!-- 个股抽屉 -->
+<div class="drawer-back" id="dBack"></div>
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <div class="dhead">
+    <div class="t" id="dTitle">—</div>
+    <button class="dclose" id="dClose" type="button">关闭</button>
+  </div>
+  <div class="dbody">
+    <div class="quote-strip" id="dQuote" style="margin-bottom:12px;"></div>
+    <div id="kChart" class="chart" style="height:320px;"></div>
+    <div class="chart-note">日线，后复权价（P_adj = P_raw × a(t)/a(τ)）；红涨绿跌。
+      下方副图为成交量（股）。停牌日保留为空缺，不做前向填充。</div>
+    <div id="vChart" class="chart" style="height:130px; margin-top:10px;"></div>
+  </div>
+</aside>
+
+<div class="grid2" style="margin-top:16px; align-items:start;">
+  <div>
+    <h3>当日领涨</h3>
+    <div class="table-wrap"><table class="grid" id="gainTable"></table></div>
+  </div>
+  <div>
+    <h3>当日领跌</h3>
+    <div class="table-wrap"><table class="grid" id="loseTable"></table></div>
+  </div>
+</div>
+
+<h2>行业分布</h2>
+<div id="indChart" class="chart" style="height:300px;"></div>
+<div class="chart-note">按 PIT 申万一级行业统计当日成分数；无行业记录的记为「未知」，不推断。</div>
+
+<script>
+const POOL_ID = {{ pool.id }};
+const AS_OF = {{ ov.nav.index[-1]|tojson if ov.nav.index else 'null' }};
+const HAS_FUND = {{ 'true' if has_fundamentals else 'false' }};
+var charts = [];
+const fmtPct = v => v==null ? '—' : (v*100).toFixed(2) + '%';
+const fmtNum = (v,d=2) => v==null ? '—' : (+v).toFixed(d);
+const fmtMoney = v => {
+  if (v==null) return '—';
+  const a = Math.abs(v);
+  if (a >= 1e8) return (v/1e8).toFixed(2) + '亿';
+  if (a >= 1e4) return (v/1e4).toFixed(1) + '万';
+  return (+v).toFixed(0);
+};
+const cls = v => v==null ? 'flat' : (v>0 ? 'up' : (v<0 ? 'down' : 'flat'));
+const signed = v => v==null ? '—' : (v>0?'+':'') + (v*100).toFixed(2) + '%';
+
+/* ---------- 主图：等权指数 vs 基准 ---------- */
+function drawNav(){
+  const el = document.getElementById('navChart');
+  const c = echarts.init(el); charts.push(c);
+  const nav = {{ ov.nav|tojson }}, bench = {{ ov.benchmark|tojson }};
+  const last = a => { for (let i=a.length-1;i>=0;i--) if (a[i]!=null) return a[i]; return null; };
+  const nl = last(nav.values), bl = last(bench.values);
+  document.getElementById('navLast').textContent = nl==null?'—':nl.toFixed(3);
+  document.getElementById('benchLast').textContent = bl==null?'—':bl.toFixed(3);
+  const cum = (x)=>{ const t=document.getElementById('navCum'); t.textContent='累计 '+(x==null?'—':((x-1)*100).toFixed(2)+'%'); t.className='k '+(x>=1?'up':'down'); t.style.fontSize='11.5px'; };
+  cum(nl);
+  const bc = (x)=>{ const t=document.getElementById('benchCum'); t.textContent='累计 '+(x==null?'—':((x-1)*100).toFixed(2)+'%'); t.style.fontSize='11.5px'; };
+  bc(bl);
+  c.setOption({
+    tooltip:{trigger:'axis', valueFormatter:v=>v==null?'—':(+v).toFixed(3)},
+    legend:{top:4, data:['池内等权','沪深300'], textStyle:{fontSize:11.5}},
+    grid:{left:58, right:20, top:44, bottom:58},
+    xAxis:{type:'category', data:nav.index, boundaryGap:false},
+    yAxis:{type:'value', scale:true, name:'归一净值(首日=1)', nameTextStyle:{fontSize:11}},
+    dataZoom:[{type:'inside'},{type:'slider', height:16, bottom:8}],
+    series:[
+      {name:'池内等权', type:'line', showSymbol:false, connectNulls:true,
+       lineStyle:{width:2, color:'#d92b2b'}, itemStyle:{color:'#d92b2b'}, data:nav.values},
+      {name:'沪深300', type:'line', showSymbol:false, connectNulls:true,
+       lineStyle:{width:1.8, color:'#1a5fb4'}, itemStyle:{color:'#1a5fb4'}, data:bench.values}]
+  });
+}
+drawNav();
+
+/* ---------- 成分数走势 ---------- */
+(function(){
+  const c = echarts.init(document.getElementById('countChart')); charts.push(c);
+  const d = {{ ov.counts|tojson }};
+  c.setOption({
+    title:{text:'逐日成分数', textStyle:{fontSize:12.5}},
+    tooltip:{trigger:'axis'},
+    grid:{left:52, right:14, top:32, bottom:34},
+    xAxis:{type:'category', data:d.index, axisLabel:{fontSize:10}},
+    yAxis:{type:'value', scale:true, nameTextStyle:{fontSize:10}},
+    series:[{type:'line', showSymbol:false, areaStyle:{opacity:.16}, color:'#1a5fb4', data:d.values}]
+  });
+})();
+
+/* ---------- 涨跌幅分布 ---------- */
+function drawDist(rows){
+  const el = document.getElementById('distChart');
+  let c = echarts.getInstanceByDom(el) || echarts.init(el);
+  if (charts.indexOf(c)<0) charts.push(c);
+  const B = [-10,-7,-5,-3,-1,0,1,3,5,7,10];
+  const labels = ['≤-10','-10~-7','-7~-5','-5~-3','-3~-1','-1~0','0~1','1~3','3~5','5~7','7~10','≥10'];
+  const counts = new Array(12).fill(0);
+  rows.forEach(r=>{
+    const v = r.pct_chg; if (v==null) return;
+    const p = v*100;
+    let idx;
+    if (p < B[0]) idx = 0;
+    else if (p >= B[B.length-1]) idx = 11;
+    else { idx = 1; for (let i=0;i<B.length-1;i++){ if (p>=B[i] && p<B[i+1]){ idx=i+1; break; } } }
+    counts[idx]++;
+  });
+  c.setOption({
+    title:{text:'涨跌幅分布', textStyle:{fontSize:12.5}},
+    tooltip:{trigger:'axis'},
+    grid:{left:52, right:14, top:32, bottom:30},
+    xAxis:{type:'category', data:labels, axisLabel:{fontSize:9, interval:1, rotate:30}},
+    yAxis:{type:'value', nameTextStyle:{fontSize:10}},
+    series:[{type:'bar', data:counts.map((n,i)=>({value:n,
+      itemStyle:{color: i>=7 ? '#d92b2b' : (i<=4 ? '#0a9c4a' : '#94a3b8')}}))}]
+  });
+}
+
+/* ---------- 成分表 ---------- */
+let ROWS = [], filtered = [], page = 1, sortKey = 'total_mv', sortOrder = 'desc';
+
+function renderTable(){
+  const size = parseInt(document.getElementById('pgSize').value,10);
+  const pages = Math.max(1, Math.ceil(filtered.length/size));
+  if (page > pages) page = pages;
+  const slice = filtered.slice((page-1)*size, page*size);
+  const tb = document.getElementById('qBody');
+  tb.innerHTML = slice.map(r=>{
+    const p = r.pct_chg;
+    return `<tr data-code="${r.code}" class="${r.suspended?'':''}">
+      <td class="l mono">${r.code}</td>
+      <td class="l name">${r.name||'—'}${r.suspended?' <span class="tag">停牌</span>':''}</td>
+      <td class="l"><span class="tag">${r.industry||'未知'}</span></td>
+      <td>${fmtNum(r.close_raw)}</td>
+      <td class="${cls(p)}">${signed(p)}</td>
+      <td class="${cls(r.ret_5d)}">${signed(r.ret_5d)}</td>
+      <td class="${cls(r.ret_20d)}">${signed(r.ret_20d)}</td>
+      <td>${r.turnover_rate==null?'—':(r.turnover_rate*100).toFixed(2)+'%'}</td>
+      <td>${fmtNum(r.volume_ratio)}</td>
+      <td>${fmtMoney(r.amount)}</td>
+      <td>${fmtNum(r.pe_ttm)}</td>
+      <td>${fmtNum(r.pb)}</td>
+      <td>${fmtMoney(r.total_mv)}</td>
+      <td>${fmtMoney(r.circ_mv)}</td>
+      <td>${r.dv_ratio==null?'—':r.dv_ratio.toFixed(2)+'%'}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="15" class="muted" style="text-align:center;padding:22px;">没有匹配的成分股</td></tr>';
+  document.getElementById('pgInfo').textContent = page + ' / ' + pages;
+  document.getElementById('pgFirst').disabled = document.getElementById('pgPrev').disabled = (page<=1);
+  document.getElementById('pgNext').disabled = document.getElementById('pgLast').disabled = (page>=pages);
+  tb.querySelectorAll('tr[data-code]').forEach(tr=>{
+    tr.style.cursor='pointer';
+    tr.addEventListener('click', ()=>openStock(tr.dataset.code));
+  });
+}
+
+function applyFilter(){
+  const q = document.getElementById('qBox').value.trim().toLowerCase();
+  const ind = document.getElementById('indSel').value;
+  filtered = ROWS.filter(r=>{
+    if (ind && (r.industry||'未知') !== ind) return false;
+    if (!q) return true;
+    return (r.code||'').includes(q) || (r.name||'').toLowerCase().includes(q)
+        || (r.industry||'').toLowerCase().includes(q);
+  });
+  // 客户端排序
+  const num = v => (typeof v === 'number' ? v : null);
+  const dir = sortOrder === 'asc' ? 1 : -1;
+  filtered.sort((a,b)=>{
+    const x=a[sortKey], y=b[sortKey];
+    const xn = num(x), yn = num(y);
+    if (xn!=null && yn!=null) return (xn-yn)*dir;
+    if (x==null) return 1; if (y==null) return -1;
+    return String(x).localeCompare(String(y))*dir;
+  });
+  page = 1; renderTable();
+}
+
+function setSort(k){
+  if (sortKey === k) sortOrder = (sortOrder==='desc' ? 'asc' : 'desc');
+  else { sortKey = k; sortOrder = 'desc'; }
+  document.querySelectorAll('#qTable th').forEach(th=>{
+    const a = th.querySelector('.arrow'); if (a) a.remove();
+    if (th.dataset.k === sortKey){
+      const s = document.createElement('span'); s.className='arrow';
+      s.textContent = sortOrder==='desc' ? '▼' : '▲'; th.appendChild(s);
+    }
+  });
+  applyFilter();
+}
+document.querySelectorAll('#qTable th').forEach(th=>th.addEventListener('click',()=>setSort(th.dataset.k)));
+
+async function loadMembers(date){
+  const meta = document.getElementById('meta');
+  meta.textContent = '加载中…';
+  const r = await fetch(`/api/pools/${POOL_ID}/members?date=${date}`);
+  const d = await r.json();
+  ROWS = d.rows;
+  document.getElementById('asOf').textContent = d.as_of;
+  const b = d.breadth;
+  meta.innerHTML = `成分 <b>${d.n_members}</b> 只 · <span class="up">涨 ${b.n_up}</span> / `
+    + `<span class="down">跌 ${b.n_down}</span> / 平 ${b.n_flat} · 涨停 ${b.limit_up} / 跌停 ${b.limit_down}`
+    + (b.median==null?'':` · 中位数 ${(b.median*100).toFixed(2)}%`);
+  // 行业下拉
+  const inds = [...new Set(ROWS.map(x=>x.industry||'未知'))].sort();
+  const sel = document.getElementById('indSel');
+  const keep = sel.value;
+  sel.innerHTML = '<option value="">全部行业</option>' + inds.map(i=>`<option>${i}</option>`).join('');
+  sel.value = inds.includes(keep) ? keep : '';
+  // 领涨 / 领跌
+  const withP = ROWS.filter(x=>x.pct_chg!=null);
+  const up = [...withP].sort((a,b)=>b.pct_chg-a.pct_chg).slice(0,8);
+  const dn = [...withP].sort((a,b)=>a.pct_chg-b.pct_chg).slice(0,8);
+  const mini = (title, arr) => '<tr><th>代码</th><th>名称</th><th class="num">涨跌幅</th></tr>'
+    + arr.map(r=>`<tr><td class="mono">${r.code}</td><td>${r.name||'—'}</td>`
+        + `<td class="num ${cls(r.pct_chg)}">${signed(r.pct_chg)}</td></tr>`).join('');
+  document.getElementById('gainTable').innerHTML = mini('领涨', up);
+  document.getElementById('loseTable').innerHTML = mini('领跌', dn);
+  drawDist(ROWS);
+  applyFilter();
+}
+
+/* ---------- 行业分布 ---------- */
+async function loadIndustry(date){
+  const r = await fetch(`/api/pools/${POOL_ID}/heat?date=${date}&top=5`);
+  const d = await r.json();
+  const el = document.getElementById('indChart');
+  const c = echarts.getInstanceByDom(el) || echarts.init(el);
+  if (charts.indexOf(c)<0) charts.push(c);
+  const items = d.industry_dist.slice(0, 24);
+  c.setOption({
+    title:{text:'成分行业分布（申万一级，当日）', textStyle:{fontSize:13}},
+    tooltip:{trigger:'axis', axisPointer:{type:'shadow'}},
+    grid:{left:96, right:36, top:44, bottom:24},
+    xAxis:{type:'value', name:'成分数', nameTextStyle:{fontSize:11}},
+    yAxis:{type:'category', data:items.map(x=>x.industry).reverse(), axisLabel:{fontSize:11}},
+    series:[{type:'bar', data:items.map(x=>x.n).reverse(), maxBarWidth:14,
+             itemStyle:{color:'#1a5fb4'}}]
+  });
+}
+
+/* ---------- 个股抽屉 ---------- */
+const drawer = document.getElementById('drawer'), dBack = document.getElementById('dBack');
+function closeDrawer(){ drawer.classList.remove('open'); dBack.classList.remove('open'); drawer.setAttribute('aria-hidden','true'); }
+document.getElementById('dClose').addEventListener('click', closeDrawer);
+dBack.addEventListener('click', closeDrawer);
+document.addEventListener('keydown', e=>{ if (e.key === 'Escape') closeDrawer(); });
+
+async function openStock(code){
+  drawer.classList.add('open'); dBack.classList.add('open'); drawer.setAttribute('aria-hidden','false');
+  document.getElementById('dTitle').innerHTML = '加载中…';
+  const r = await fetch(`/api/stocks/${code}/ohlc?days=250` + (AS_OF?`&end=${AS_OF}`:''));
+  if (!r.ok){ document.getElementById('dTitle').textContent = '没有该股行情'; return; }
+  const d = await r.json();
+  const lastPct = (()=>{ const a=d.pct_chg; for(let i=a.length-1;i>=0;i--) if(a[i]!=null) return a[i]; return null; })();
+  document.getElementById('dTitle').innerHTML =
+    `${d.name||''} <span class="code">${d.code}</span>`;
+  const lastClose = (()=>{ const a=d.close; for(let i=a.length-1;i>=0;i--) if(a[i]!=null) return a[i]; return null; })();
+  document.getElementById('dQuote').innerHTML =
+    `<div class="q"><div class="k">最新收盘(复权)</div><div class="v">${lastClose==null?'—':lastClose.toFixed(2)}</div></div>
+     <div class="q"><div class="k">最新涨跌幅</div><div class="v ${cls(lastPct)}">${signed(lastPct)}</div></div>
+     <div class="q"><div class="k">区间</div><div class="v" style="font-size:13px;">${d.index[0]} ~ ${d.index[d.index.length-1]}</div></div>`;
+  const k = echarts.getInstanceByDom(document.getElementById('kChart')) || echarts.init(document.getElementById('kChart'));
+  if (charts.indexOf(k)<0) charts.push(k);
+  k.setOption({
+    tooltip:{trigger:'axis', axisPointer:{type:'cross'},
+      formatter: ps=>{ const i=ps[0].dataIndex; const o=d.ohlc[i];
+        if(!o || o[0]==null) return d.index[i]+'<br>停牌/无数据';
+        const pc = d.pct_chg[i];
+        return `${d.index[i]}<br>开 ${o[0]}<br>收 ${o[1]}<br>低 ${o[2]}<br>高 ${o[3]}`
+             + `<br>涨跌 ${pc==null?'—':(pc*100).toFixed(2)+'%'}`; }},
+    grid:{left:58, right:16, top:16, bottom:34},
+    xAxis:{type:'category', data:d.index, axisLabel:{fontSize:10}},
+    yAxis:{type:'value', scale:true, nameTextStyle:{fontSize:10}, splitLine:{lineStyle:{color:'#eef2f7'}}},
+    series:[{type:'candlestick', data:d.ohlc,
+      itemStyle:{color:'#d92b2b', color0:'#0a9c4a', borderColor:'#d92b2b', borderColor0:'#0a9c4a'}}]
+  }, true);
+  const v = echarts.getInstanceByDom(document.getElementById('vChart')) || echarts.init(document.getElementById('vChart'));
+  if (charts.indexOf(v)<0) charts.push(v);
+  v.setOption({
+    tooltip:{trigger:'axis'}, grid:{left:58, right:16, top:22, bottom:28},
+    xAxis:{type:'category', data:d.index, axisLabel:{show:false}},
+    yAxis:{type:'value', name:'成交量', nameTextStyle:{fontSize:10}},
+    series:[{type:'bar', data:d.volume, itemStyle:{color:'#94a3b8'}, barMaxWidth:6}]
+  }, true);
+}
+
+/* ---------- 交互绑定 ---------- */
+document.getElementById('dSel').addEventListener('change', e=>{
+  const dt = e.target.value;
+  loadMembers(dt); loadIndustry(dt);
+});
+document.getElementById('qBox').addEventListener('input', applyFilter);
+document.getElementById('indSel').addEventListener('change', applyFilter);
+document.getElementById('pgSize').addEventListener('change', ()=>{ page=1; renderTable(); });
+document.getElementById('pgFirst').addEventListener('click', ()=>{ page=1; renderTable(); });
+document.getElementById('pgPrev').addEventListener('click', ()=>{ if(page>1){page--; renderTable();} });
+document.getElementById('pgNext').addEventListener('click', ()=>{
+  const size=parseInt(document.getElementById('pgSize').value,10);
+  if(page*size < filtered.length){ page++; renderTable(); }
+});
+document.getElementById('pgLast').addEventListener('click', ()=>{
+  const size=parseInt(document.getElementById('pgSize').value,10);
+  page=Math.max(1, Math.ceil(filtered.length/size)); renderTable();
+});
+
+loadMembers(AS_OF || document.getElementById('dSel').value);
+loadIndustry(AS_OF || document.getElementById('dSel').value);
+window.addEventListener('resize', ()=>charts.forEach(c=>c && c.resize()));
+</script>
+{% endblock %}

@@ -1,0 +1,98 @@
+﻿{% extends "base.html" %}
+{% block content %}
+<div class="crumb"><a href="/factors">因子库</a> / 批量{{ '删除' if mode == 'delete' else '重算' }}结果</div>
+<div class="page-head">
+  <div>
+    <h1>批量{{ '删除' if mode == 'delete' else '重算' }}结果</h1>
+    {% if mode == 'delete' %}
+    <p class="lead">请求 {{ res.n_requested }} 个 · 已删除 <b class="pos">{{ res.n_deleted }}</b>
+      {% if res.n_blocked %} · 被拒绝 <b class="neg">{{ res.n_blocked }}</b>{% endif %}
+      {% if res.n_cascaded_signals %} · 连带删除策略 <b class="neg">{{ res.n_cascaded_signals }}</b> 个{% endif %}</p>
+    {% else %}
+    <p class="lead">请求 {{ res.n_requested }} 个因子 · 成功 <b class="pos">{{ res.n_ok }}</b>
+      {% if res.n_failed %} · 失败 <b class="neg">{{ res.n_failed }}</b>{% endif %}。
+      重算只改因子值与诊断，<b>不删除</b>已登记的信号或回测记录。</p>
+    {% endif %}
+  </div>
+  <div class="toolbar"><a class="btn" href="/factors">返回因子库</a></div>
+</div>
+
+{% if mode == 'refresh' %}
+<div class="quote-strip" style="margin-top:12px;">
+  <div class="q"><div class="k">计算区间</div>
+    <div class="v" style="font-size:14px;">
+      {% if range_mode == 'set' %}{{ start or '（起点不裁）' }} ~ {{ end or '（终点不裁）' }}
+      {% else %}自动（全部本地行情）{% endif %}</div></div>
+  <div class="q"><div class="k">股票池</div>
+    <div class="v" style="font-size:14px;">
+      {% if pool_mode == 'set' %}统一改为所选池{% else %}保持各因子原有池{% endif %}</div></div>
+</div>
+
+{% if res.n_failed %}
+<h2>失败项</h2>
+<div class="table-wrap">
+<table class="grid">
+  <tr><th>因子 ID</th><th>错误</th></tr>
+  {% for e in res.errors %}<tr><td>{{ e.id }}</td><td class="neg">{{ e.error }}</td></tr>{% endfor %}
+</table>
+</div>
+
+{% endif %}
+
+<h2>成功项</h2>
+<div class="table-wrap">
+<table class="grid">
+  <tr><th>因子</th><th>重算前区间</th><th>重算后区间</th><th>区间选择</th><th>股票池</th><th></th></tr>
+  {% for r in res.ok %}
+  <tr>
+    <td>#{{ r.id }} <b>{{ r.name }}</b></td>
+    <td class="mono">{% if r.value_range_before %}{{ r.value_range_before[0] }} ~ {{ r.value_range_before[1] }}{% else %}未登记{% endif %}</td>
+    <td class="mono"><b>{{ r.value_range_after[0] }} ~ {{ r.value_range_after[1] }}</b></td>
+    <td class="mono" style="font-size:12px;">
+      {% if r.window is mapping %}
+        请求 {{ r.window.requested_start }} ~ {{ r.window.requested_end }}<br>
+        <span class="muted">实际 {{ r.window.actual_start }} ~ {{ r.window.actual_end }}（{{ r.window.n_days }} 个交易日）</span>
+      {% else %}{{ r.window }}{% endif %}
+    </td>
+    <td class="muted" style="font-size:12px;">{{ r.universe_note }}</td>
+    <td><a href="/factors/{{ r.id }}">查看诊断 →</a></td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+
+
+{% else %}
+{# ---------------- 删除结果 ---------------- #}
+{% if res.n_deleted %}
+<h2>已删除</h2>
+<div class="table-wrap">
+<table class="grid">
+  <tr><th>因子</th><th>连带删除的策略</th></tr>
+  {% for d in res.deleted %}
+  <tr>
+    <td>#{{ d.id }} <b>{{ d.name }}</b></td>
+    <td>{% if d.cascaded_signals %}<span class="neg">{{ d.cascaded_signals|join('、') }}</span>
+        {% else %}<span class="muted">无</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+
+{% endif %}
+
+{% if res.n_blocked %}
+<h2>被拒绝</h2>
+<div class="table-wrap">
+<table class="grid">
+  <tr><th>因子</th><th>原因</th></tr>
+  {% for b in res.blocked %}
+  <tr><td>#{{ b.id }}{% if b.name %} <b>{{ b.name }}</b>{% endif %}</td>
+      <td class="neg">{{ b.reason }}</td></tr>
+  {% endfor %}
+</table>
+</div>
+<div class="chart-note">被策略引用的因子默认不删；确需删除请勾选「强制删除」。</div>
+{% endif %}
+{% endif %}
+{% endblock %}

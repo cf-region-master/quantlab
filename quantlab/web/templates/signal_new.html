@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="crumb"><a href="/signals">策略</a> / 新建信号</div>
+<h1>新建信号（策略）</h1>
+
+<form class="panel" method="post" action="/signals/new" id="sigForm">
+  <div class="grid2">
+    <div><label>信号名称 *</label><input name="name" required maxlength="80" placeholder="例如：低波动+动量（等权）"></div>
+    <div><label>描述</label><input name="description" maxlength="200" placeholder="可选"></div>
+  </div>
+
+  <div>
+    <label>因子分量（1 ~ 10 个）<span class="muted" id="selCount">已选 0 个</span></label>
+    {% if factors %}
+    <div class="checklist">
+      {% for f in factors %}
+      {% set m = mets.get(f.id) %}
+      <label>
+        <input type="checkbox" name="factor_ids" value="{{ f.id }}"
+          data-vstart="{{ f.value_start.strftime('%Y-%m-%d') if f.value_start else '' }}"
+          {% if f.id in preselect %}checked{% endif %}>
+        <span><b>{{ f.name }}</b> <span class="badge {{ f.source }}">{{ f.source }}</span>
+          <span class="meta">
+            {%- if m and m.rank_ic_mean is not none %} · RankIC(20d)={{ '%+.4f'|format(m.rank_ic_mean) }}{% endif %}
+            {%- if f.value_start %} · {{ f.value_start.strftime('%Y-%m-%d') }}~{{ f.value_end.strftime('%Y-%m-%d') }}{% endif %}
+          </span>
+        </span>
+      </label>
+      {% endfor %}
+    </div>
+    {% else %}<div class="empty">因子库为空。</div>{% endif %}
+  </div>
+
+  <div class="grid2">
+    <div><label>组合模型</label>
+      <select name="model_type" id="modelType">
+        <option value="equal_weight">equal_weight 等权</option>
+        <option value="ic_weight">ic_weight 按 RankIC(20d) 加权</option>
+        <option value="linear">linear 线性模型（截面回归）</option>
+        <option value="tree">tree 决策树 / GBDT</option>
+      </select></div>
+    <div><label>有效区间 [a, b] *（回测只能落在此区间内）</label>
+      <div class="flex">
+        <input type="date" name="start_date" id="startDate" required value="{{ data_start }}" min="{{ data_start }}" max="{{ data_end }}" style="flex:1">
+        <span class="muted">~</span>
+        <input type="date" name="end_date" required value="{{ data_end }}" min="{{ data_start }}" max="{{ data_end }}" style="flex:1">
+      </div></div>
+  </div>
+
+  <div id="modelParams" style="display:none">
+    <label>模型参数（仅 linear / tree 需要）</label>
+    <div class="grid3">
+      <div><label>多久重新拟合一次（交易日）</label><input type="number" name="refit_days" value="20" min="1" max="250"></div>
+      <div><label>用之前多久的数据拟合（交易日）</label><input type="number" name="train_window" value="252" min="20" max="1500"></div>
+      <div><label>标签 purge（交易日）</label><input type="number" name="purge" value="5" min="0" max="60"></div>
+    </div>
+  </div>
+
+  <div class="form-hint" id="needHint"></div>
+  <div><button class="btn" type="submit" id="submitBtn">创建信号</button> <a class="btn ghost" href="/signals">取消</a></div>
+</form>
+
+<script>
+const form = document.getElementById('sigForm');
+const boxes = Array.from(document.querySelectorAll('input[name="factor_ids"]'));
+const cnt = document.getElementById('selCount'), btn = document.getElementById('submitBtn');
+const mt = document.getElementById('modelType'), mp = document.getElementById('modelParams');
+const hint = document.getElementById('needHint'), sd = document.getElementById('startDate');
+const DATA_START = {{ data_start|tojson }};
+const FAC_MIN = {{ fac_min_start|tojson }};      // 所选因子中最晚的起始覆盖
+
+function sync(){
+  const n = boxes.filter(b=>b.checked).length;
+  cnt.textContent = '已选 ' + n + ' 个';
+  const bad = n < 1 || n > 10;
+  cnt.className = n ? (bad ? 'neg' : 'pos') : 'muted';
+  btn.disabled = bad;
+  syncModel();
+}
+function minStart(){
+  const picked = boxes.filter(b=>b.checked).map(b=>b.dataset.vstart).filter(Boolean).sort();
+  return picked.length ? picked[picked.length-1] : FAC_MIN;   // 取最晚的
+}
+function syncModel(){
+  const n = boxes.filter(b=>b.checked).length;
+  if (!n){ hint.textContent = ''; return; }
+  const needs = (mt.value === 'linear' || mt.value === 'tree');
+  mp.style.display = needs ? 'block' : 'none';
+  const a = sd.value || DATA_START;
+  if (!needs){
+    hint.textContent = '因子覆盖 ' + minStart() + ' ~ ' + {{ data_end|tojson }} + '；等权 / IC 加权不需要预热窗口。';
+    return;
+  }
+  const need = (+form.train_window.value || 0) + (+form.purge.value || 0);
+  const d = new Date(a); d.setDate(d.getDate() - Math.round(need * 1.6));  // 自然日近似
+  const needStr = d.toISOString().slice(0,10);
+  const have = minStart();
+  const ok = have && have <= needStr;
+  hint.innerHTML = '拟合需要覆盖到 <b>' + needStr + '</b>（a − ' + need + ' 交易日）；'
+    + '所选因子最早 <b>' + have + '</b> '
+    + (ok ? '<b class="pos">满足</b>' : '<b class="neg">不足，提交会被拒绝</b>');
+}
+boxes.forEach(b=>b.addEventListener('change', sync));
+mt.addEventListener('change', syncModel);
+sd.addEventListener('change', syncModel);
+['refit_days','train_window','purge'].forEach(n=>form[n].addEventListener('input', syncModel));
+form.addEventListener('submit',(ev)=>{
+  const n = boxes.filter(b=>b.checked).length;
+  if (n<1 || n>10){ ev.preventDefault(); alert('请选择 1~10 个因子（当前 '+n+' 个）'); }
+});
+sync();
+</script>
+{% endblock %}

@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}QuantLab · 量化因子挖掘平台{% endblock %}</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/echarts.min.js"></script>
+</head>
+<body>
+{% set path = request.url.path if request else '/' %}
+<nav class="nav">
+  <div class="brand">QuantLab <span class="sub">量化投研框架 · Project1</span></div>
+  <div class="links">
+    <a href="/" class="{{ 'active' if path == '/' else '' }}">总览</a>
+    <a href="/factors" class="{{ 'active' if path.startswith('/factors') else '' }}">因子库</a>
+    <a href="/pools" class="{{ 'active' if path.startswith('/pools') else '' }}">股票池</a>
+    <a href="/signals" class="{{ 'active' if path.startswith('/signals') else '' }}">策略</a>
+    <a href="/backtests" class="{{ 'active' if path.startswith('/backtests') else '' }}">回测</a>
+    <a href="/lab" class="{{ 'active' if path.startswith('/lab') else '' }}">算法实验室</a>
+  </div>
+</nav>
+<main>{% block content %}{% endblock %}</main>
+<footer class="foot">
+  数据口径：真实 A 股日线（主源 Tushare，见 <code>data/raw/manifest.json</code>）·
+  股票池为逐日 PIT 指数成分（见 <code>data/reference/</code>）·
+  调整价 = 原始价 × 复权因子比 · 缺失值不填零
+</footer>
+</body>
+</html>

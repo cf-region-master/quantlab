@@ -1,0 +1,50 @@
+﻿{% extends "base.html" %}
+{% block content %}
+<div class="crumb"><a href="/factors">因子库</a> / 新建因子（手写代码）</div>
+<h1>新建因子（手写代码）</h1>
+<p class="lead">代码在受限沙箱里执行；执行失败不会入库。</p>
+
+<div class="grid2" style="align-items:start;">
+<form class="panel" method="post" action="/factors/new" style="max-width:100%">
+  <div class="grid2">
+    <div><label>因子名称 *</label><input name="name" required maxlength="60" placeholder="例如：20日动量（手写）"></div>
+    <div><label>描述</label><input name="description" maxlength="200" placeholder="可选"></div>
+  </div>
+
+  <div>
+    <label>因子代码 *（必须定义顶层函数 <code>factor(fields)</code>）</label>
+    <textarea name="code" id="codeBox" required spellcheck="false"
+      style="width:100%; min-height:260px; font-family:Consolas,'Cascadia Mono',monospace; font-size:13px; line-height:1.5; padding:10px; border:1px solid var(--line); border-radius:8px;">{{ template_code }}</textarea>
+    <div class="form-hint">
+      <b>fields</b> 提供：{% for k in fields %}<code>{{ k }}</code>{% if not loop.last %} · {% endif %}{% endfor %}
+      —— 每个都是 <b>date × code</b> 的调整价宽表（index=交易日，columns=资产代码）。
+      <br>可导入的模块：<code>{{ allowed_modules }}</code>；<code>np</code> / <code>pd</code> 已预置。
+      <br>可用数据：{{ data_start }} ~ {{ data_end }}（{{ n_days }} 交易日 × {{ n_codes }} 只）。
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div><label>研究假设</label><input name="hypothesis" maxlength="200" placeholder="为什么这个因子应该有效"></div>
+    <div><label>预期方向</label><input name="direction" maxlength="200" placeholder="分数越高，预期收益越高 / 取负号的原因"></div>
+  </div>
+  <div class="grid2">
+    <div><label>缺失处理说明</label><input name="missing_policy" maxlength="200" placeholder="窗口不足记 NaN，不填零"></div>
+    <div><label>可能失效情形（分号分隔）</label><input name="failure_modes" maxlength="300" placeholder="趋势反转期失效;与市值因子相关性高"></div>
+  </div>
+  <div class="grid2">
+    <div><label>复权方式（决定用哪张价格面板算因子值）</label>
+      <select name="adjust">
+        <option value="hfq">后复权（τ = 样本首日，默认）</option>
+        <option value="qfq">前复权（τ = 样本末日）</option>
+      </select>
+      <div class="form-hint">只影响用到价格绝对水平的因子。</div></div>
+    <div></div>
+  </div>
+
+  <div><button class="btn" type="submit">执行并登记</button> <a class="btn ghost" href="/factors">取消</a></div>
+</form>
+
+<div>
+  
+</div>
+{% endblock %}

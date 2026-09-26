@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block content %}
+{% set mj = t.metrics_json or {} %}
+{% set summ = mj.get('summary') or {} %}
+<h1>挖掘任务 <code>{{ t.id }}</code>
+  <span class="status {{ t.status }}" id="st">{{ t.status }}</span></h1>
+
+<div class="quote-strip" style="margin-top:12px;">
+  <div class="q"><div class="k">引擎</div><div class="v" style="font-size:15px;">{{ t.engine }}</div></div>
+  <div class="q"><div class="k">进度</div><div class="v" id="stage">{{ t.stage }} · {{ '%.0f%%'|format(t.progress*100) }}</div></div>
+  {% if summ.get('pool_size') is not none %}
+  <div class="q"><div class="k">因子池容量</div><div class="v">{{ summ.get('pool_size') }}</div>
+    <div class="k" style="font-size:11.5px;">入选 / {{ t.params.get('pool_capacity') }}</div></div>
+  {% endif %}
+  {% if summ.get('elapsed_seconds') %}
+  <div class="q"><div class="k">耗时</div><div class="v">{{ summ.get('elapsed_seconds') }}s</div>
+    <div class="k" style="font-size:11.5px;">{{ summ.get('steps', '') }} 步 · {{ summ.get('device', '') }}</div></div>
+  {% endif %}
+  <div class="q"><div class="k">候选</div><div class="v">{{ cands|length }}</div>
+    <div class="k" style="font-size:11.5px;">已采纳 {{ cands|selectattr('adopted')|list|length }}</div></div>
+</div>
+
+{% if summ.get('train') %}
+<h2>因子池 IC（三段分别计算，不按 test 择优）</h2>
+<div class="metrics" style="grid-template-columns:repeat(3,1fr);">
+  {% for key, label in [('train','训练段'), ('validation','验证段'), ('test','测试段')] %}
+  {% set s = summ.get(key) or {} %}
+  <div class="card {{ 'ok' if key == 'train' else '' }}">
+    <div class="k">{{ label }}</div>
+    <div class="v" style="font-size:20px;" class="{{ 'pos' if (s.get('ic') or 0) > 0 else 'neg' }}">
+      {{ '%+.4f'|format(s.get('ic')) if s.get('ic') is not none else '—' }}</div>
+    <div class="n">ICIR {{ '%.3f'|format(s.get('icir')) if s.get('icir') is not none else '—' }}
+      · 覆盖 {{ '%.0f%%'|format((s.get('coverage') or 0)*100) }}</div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<details style="margin-top:12px;">
+  <summary class="muted" style="cursor:pointer;font-size:12.5px;">任务参数与原始指标（JSON，展开查看）</summary>
+  <div class="kv" style="margin-top:8px;">
+    <div class="k">参数</div><div><code>{{ t.params|tojson }}</code></div>
+    <div class="k">原始指标</div><div id="metrics"><code>{{ metrics_wo_curve|tojson }}</code></div>
+  </div>
+</details>
+
+<div class="progress" style="margin:12px 0;"><div id="bar" style="width:{{ t.progress*100 }}%"></div></div>
+<div class="flex">
+  <form method="post" action="/lab/tasks/{{ t.id }}/cancel" id="cancelForm">
+    <button class="btn ghost" type="submit" {% if t.status not in ('PENDING','RUNNING') %}disabled{% endif %}>取消任务</button>
+  </form>
+</div>
+
+{% set auto = mj.get('auto_strategy') %}
+{% set segs = mj.get('segments') %}
+{% if segs %}
+<h2>训练 / 验证 / 测试分段</h2>
+<div class="table-wrap">
+<table class="grid">
+  <tr><th>段</th><th>起</th><th>止</th><th class="num">交易日数</th><th>用途</th></tr>
+  {% for k, label, use in [('train','训练段','搜索/拟合只看这一段'),
+                           ('valid','验证段','不参与搜索，仅作对照'),
+                           ('test','测试段','完全留出，最终一次性检验')] %}
+  {% set s = segs.get(k) or {} %}
+  <tr>
+    <td><b>{{ label }}</b></td>
+    <td class="mono">{{ s.start or '—' }}</td>
+    <td class="mono">{{ s.end or '—' }}</td>
+    <td class="num">{{ s.n_bars if s.n_bars is not none else '—' }}</td>
+    <td class="muted">{{ use }}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+<div class="chart-note">{{ segs.note or '' }}</div>
+{% endif %}
+{% if auto %}
+<div class="card ok" style="margin-top:12px;">
+  <div class="k">已自动生成策略</div>
+  <div class="n" style="margin-top:6px;">
+    {% if auto.id %}
+      因子池（{{ auto.n_factors }} 个因子，权重由算法学习）已作为<b>隐藏因子</b>入库，并落成策略
+      <a href="/signals/{{ auto.id }}"><b>{{ auto.name }}</b></a>。
+      <a class="btn ghost" style="padding:5px 12px;font-size:13px;margin-left:8px;"
+         href="/backtests/new?signal_id={{ auto.id }}">用该策略跑回测 →</a>
+    {% else %}
+      生成策略失败：{{ auto.error }}
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+<h2>候选（按训练段 RankIC 排序；同时展示 valid/test —— 谨防过拟合）</h2>
+<p class="lead">已自动入库的候选标「已导入」；勾选后再导入的视为<b>人工确认</b>，会从隐藏转为可见。</p>
+{% if cands %}
+<form id="adoptForm">
+<input type="hidden" name="task_id" value="{{ t.id }}">
+<table class="grid">
+  <tr><th>采纳</th><th>表达式</th><th>tokens</th><th>Train RankIC</th><th>Valid RankIC</th><th>Test RankIC</th><th>状态</th></tr>
+  {% for c in cands %}
+  <tr>
+    <td><input type="checkbox" name="candidate_ids" value="{{ c.id }}" {% if c.adopted %}disabled{% endif %}></td>
+    <td><code>{{ c.expression }}</code></td><td>{{ c.size }}</td>
+    <td class="{{ 'pos' if c.train_ic > 0 else 'neg' }}">{{ '%.4f'|format(c.train_ic) }}</td>
+    <td class="{{ 'pos' if c.valid_ic > 0 else 'neg' }}">{{ '%.4f'|format(c.valid_ic) }}</td>
+    <td class="{{ 'pos' if c.test_ic > 0 else 'neg' }}">{{ '%.4f'|format(c.test_ic) }}</td>
+    <td>{% if c.adopted %}<a href="/factors/{{ c.factor_id }}">已导入因子库 #{{ c.factor_id }}</a>{% else %}—{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+<p><button class="btn" type="submit" id="adoptBtn">一键导入因子库</button></p>
+</form>
+{% else %}
+<p class="muted">暂无候选（任务运行中或无有效表达式）。</p>
+{% endif %}
+
+<h2>运行日志与训练曲线</h2>
+<div class="grid2">
+  <pre class="log" id="log">{{ t.log }}</pre>
+  <div id="curve" class="chart" style="height:320px;"></div>
+</div>
+
+<script>
+const curveData = {{ (t.metrics_json or {}).get('curve', [])|tojson }};
+var ch = null;
+if (curveData.length) {
+  ch = echarts.init(document.getElementById('curve'));
+  ch.setOption({title:{text:'逐代最优/平均 RankIC（训练段）', textStyle:{fontSize:13}},
+    tooltip:{trigger:'axis'}, legend:{},
+    xAxis:{type:'category', data:curveData.map(c=>c.generation)},
+    yAxis:{type:'value', scale:true},
+    series:[{name:'best', type:'line', data:curveData.map(c=>c.best_ic)},
+            {name:'mean', type:'line', data:curveData.map(c=>c.mean_ic)}]});
+}
+window.addEventListener('resize', ()=>{ if (ch) ch.resize(); });
+const tid = "{{ t.id }}";
+const st = "{{ t.status }}";
+if (st === 'RUNNING' || st === 'PENDING') {
+  const timer = setInterval(async ()=>{
+    const r = await fetch('/api/lab/tasks/'+tid);
+    const j = await r.json();
+    document.getElementById('st').textContent = j.status;
+    document.getElementById('stage').textContent = (j.stage||'') + ' · ' + Math.round((j.progress||0)*100) + '%';
+    document.getElementById('bar').style.width = ((j.progress||0)*100) + '%';
+    document.getElementById('log').textContent = j.log || '';
+    if (['SUCCESS','FAILED','CANCELLED'].includes(j.status)) {
+      clearInterval(timer); setTimeout(()=>location.reload(), 800);
+    }
+  }, 2000);
+}
+const cf = document.getElementById('adoptForm');
+if (cf) cf.addEventListener('submit', async (ev)=>{
+  ev.preventDefault();
+  const fd = new FormData(cf);
+  const payload = {task_id: fd.get('task_id'),
+                   candidate_ids: fd.getAll('candidate_ids').map(Number)};
+  if (!payload.candidate_ids.length) { alert('请先勾选候选'); return; }
+  const r = await fetch('/lab/adopt', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+  const j = await r.json();
+  location.reload();
+});
+document.getElementById('cancelForm').addEventListener('submit', async (ev)=>{
+  ev.preventDefault();
+  await fetch('/lab/tasks/'+tid+'/cancel', {method:'POST'});
+  setTimeout(()=>location.reload(), 500);
+});
+</script>
+{% endblock %}

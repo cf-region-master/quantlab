@@ -1,0 +1,39 @@
+﻿{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>回测记录</h1>
+    <p class="lead">一个信号可对应多条回测记录（区间 / 股票池 / 权重 / 成本各自独立）。</p>
+  </div>
+  <div class="toolbar"><a class="btn" href="/backtests/new">＋ 新建回测</a></div>
+</div>
+
+{% if rows %}
+<div class="table-wrap" style="margin-top:14px;">
+<table class="grid">
+  <tr><th>ID</th><th>信号</th><th>区间</th><th>股票池</th>
+      <th class="num">top_n</th><th>权重</th><th>调仓</th>
+      <th class="num">年化(净)</th><th class="num">Sharpe</th><th class="num">MDD</th>
+      <th class="num">成本(元)</th><th>检查</th><th>时间</th></tr>
+  {% for r in rows %}
+  <tr class="rowlink" onclick="location='/backtests/{{ r.id }}'">
+    <td><a class="rowlink-a" href="/backtests/{{ r.id }}"><b>bt{{ r.id }}</b></a></td>
+    <td><a href="/signals/{{ r.signal_id }}">{{ r.signal_name }}</a></td>
+    <td class="mono">{{ r.start_date[:10] }} ~ {{ r.end_date[:10] }}</td>
+    <td class="muted">{{ r.pool_note[:30] }}</td>
+    <td class="num">{{ r.top_n }}</td><td class="mono">{{ r.weighting }}</td>
+    <td class="mono">{{ r.rebalance_freq }}</td>
+    <td class="num">{% if r.annualized_return is not none %}<span class="{{ 'pos' if r.annualized_return>=0 else 'neg' }}">{{ '%+.2f%%'|format(r.annualized_return*100) }}</span>{% else %}—{% endif %}</td>
+    <td class="num">{{ '%.2f'|format(r.sharpe) if r.sharpe is not none else '—' }}</td>
+    <td class="num">{{ '%.2f%%'|format(r.max_drawdown*100) if r.max_drawdown is not none else '—' }}</td>
+    <td class="num">{{ '{:,.0f}'.format((r.metrics_json or {}).get('cost',{}).get('total_cost_currency',0)) }}</td>
+    <td>{% if r.all_pass %}<span class="pill on">PASS</span>{% else %}<span class="pill off">FAIL</span>{% endif %}</td>
+    <td class="mono">{{ r.created_at[:16].replace('T',' ') }}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% else %}
+<div class="empty">还没有回测记录。<a href="/backtests/new">新建一次</a>。</div>
+{% endif %}
+{% endblock %}

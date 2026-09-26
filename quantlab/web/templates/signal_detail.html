@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block content %}
+{# DIAG / charts 必须在页面顶部声明：_layered_block.html 是内联脚本，先于底部脚本执行 #}
+<script>const DIAG = {{ diag|tojson }}; var charts = [];</script>
+<div class="crumb"><a href="/signals">策略</a> / 信号 #{{ sig.id }}</div>
+<div class="page-head">
+  <div>
+    <h1>{{ sig.name }}</h1>
+    {% if sig.description %}<p class="lead">{{ sig.description }}</p>{% endif %}
+  </div>
+  <div class="toolbar">
+    <a class="btn" href="/backtests/new?signal_id={{ sig.id }}">用该信号跑回测 →</a>
+  </div>
+</div>
+
+<div class="kv" style="margin-top:12px;">
+  <div class="k">因子分量</div>
+  <div>{% for c in sig.components %}<a href="/factors/{{ c.factor_id }}">{{ fac_names.get(c.factor_id, c.factor_id) }}</a>{% if not loop.last %} + {% endif %}{% endfor %}</div>
+  <div class="k">组合模型</div><div class="mono">{{ sig.model_type }}{% if sig.model_params %} · {{ sig.model_params }}{% endif %}</div>
+  <div class="k">有效区间</div><div class="mono">{{ sig.start_date[:10] }} ~ {{ sig.end_date[:10] }}</div>
+  <div class="k">创建时间</div><div class="mono">{{ sig.created_at[:16].replace('T',' ') }}</div>
+</div>
+
+<h2>信号诊断</h2>
+{% if diag and not diag.error %}
+<div class="toolbar" style="margin-bottom:10px;">
+  <label class="muted">持有期 h</label>
+  <select id="hSel">{% for h in diag.keys()|list|sort %}<option value="{{ h }}">h = {{ h }} 交易日</option>{% endfor %}</select>
+  <label class="muted">指标</label>
+  <select id="mSel"><option value="rank_ic">RankIC</option><option value="ic">IC</option></select>
+</div>
+
+<div class="metrics" style="grid-template-columns:repeat(6,1fr); margin-bottom:12px;">
+  <div class="card"><div class="k">IC 均值</div><div class="v" id="vIC" style="font-size:18px">—</div></div>
+  <div class="card"><div class="k">RankIC 均值</div><div class="v" id="vR" style="font-size:18px">—</div></div>
+  <div class="card"><div class="k">ICIR</div><div class="v" id="vIcir" style="font-size:18px">—</div></div>
+  <div class="card"><div class="k">t 统计量</div><div class="v" id="vT" style="font-size:18px">—</div></div>
+  <div class="card"><div class="k">覆盖率</div><div class="v" id="vCov" style="font-size:18px">—</div></div>
+  <div class="card"><div class="k">单调性</div><div class="v" id="vMono" style="font-size:18px">—</div></div>
+</div>
+
+<div id="icChart" class="chart" style="height:300px;"></div>
+<div class="chart-note">粗线为 20 日滚动均值，浅灰细线为日值。</div>
+
+{% include "_layered_block.html" with context %}
+{% elif diag and diag.error %}
+<div class="empty">诊断失败：{{ diag.error }}</div>
+{% else %}
+<div class="empty">暂无诊断结果。</div>
+{% endif %}
+
+<h2>该信号的回测记录（{{ backtests|length }}）</h2>
+{% if backtests %}
+<div class="table-wrap">
+<table class="grid">
+  <tr><th>ID</th><th>区间</th><th>股票池</th><th class="num">top_n</th><th>权重</th><th>调仓</th>
+      <th class="num">年化</th><th class="num">Sharpe</th><th class="num">MDD</th><th class="num">成本(元)</th><th>检查</th></tr>
+  {% for b in backtests %}
+  {% set m = (b.metrics_json or {}).get('net') or {} %}
+  <tr class="rowlink" onclick="location='/backtests/{{ b.id }}'">
+    <td><a class="rowlink-a" href="/backtests/{{ b.id }}"><b>bt{{ b.id }}</b></a></td>
+    <td class="mono">{{ b.start_date[:10] }} ~ {{ b.end_date[:10] }}</td>
+    <td class="muted">{{ b.pool_note[:34] }}</td>
+    <td class="num">{{ b.top_n }}</td><td class="mono">{{ b.weighting }}</td><td class="mono">{{ b.rebalance_freq }}</td>
+    <td class="num">{{ '%+.2f%%'|format(m.annualized_return*100) if m.annualized_return is not none else '—' }}</td>
+    <td class="num">{{ '%.2f'|format(m.annualized_sharpe) if m.annualized_sharpe is not none else '—' }}</td>
+    <td class="num">{{ '%.2f%%'|format(m.max_drawdown*100) if m.max_drawdown is not none else '—' }}</td>
+    <td class="num">{{ '{:,.0f}'.format((b.metrics_json or {}).get('cost',{}).get('total_cost_currency',0)) }}</td>
+    <td>{% if (b.checks_json or {}).get('all_pass') %}<span class="pill on">PASS</span>{% else %}<span class="pill off">FAIL</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% else %}
+<div class="empty">还没有回测。<a href="/backtests/new?signal_id={{ sig.id }}">跑一次 →</a></div>
+{% endif %}
+
+<script>
+function num4(v){ return v==null ? null : Math.round(v*1e4)/1e4; }
+function roll(vals, w){
+  const out=[];
+  for (let i=0;i<vals.length;i++){
+    let s=0,n=0;
+    for (let j=Math.max(0,i-w+1); j<=i; j++){ const v=vals[j]; if(v!=null&&isFinite(v)){s+=v;n++;} }
+    out.push(n?Math.round((s/n)*1e4)/1e4:null);
+  }
+  return out;
+}
+const icChart = echarts.init(document.getElementById('icChart'));
+charts.push(icChart);
+function cur(){ return {h: document.getElementById('hSel').value,
+                        m: document.getElementById('mSel').value}; }
+function drawIC(){
+  const {h, m} = cur();
+  const s = ((DIAG[h] || {}).ic_series) || {};
+  const raw = (m === 'ic' ? s.ic : s.rank_ic) || [];
+  const label = (m === 'ic' ? 'IC' : 'RankIC') + '(h=' + h + ')';
+  icChart.setOption({
+    tooltip:{trigger:'axis', valueFormatter:v=>v==null?'—':(+v).toFixed(4)},
+    legend:{top:4, textStyle:{fontSize:11}},
+    grid:{left:56, right:24, top:46, bottom:56},
+    xAxis:{type:'category', data:s.index||[], boundaryGap:false},
+    yAxis:{type:'value', scale:true, name:'相关系数', nameTextStyle:{fontSize:11}},
+    dataZoom:[{type:'inside'},{type:'slider', height:16, bottom:8}],
+    series:[
+      {name:label+' 日值', type:'line', showSymbol:false, connectNulls:false,
+       lineStyle:{width:.8, opacity:.18, color:'#94a3b8'}, itemStyle:{color:'#94a3b8'}, data:raw.map(num4)},
+      {name:'Roll20 '+label, type:'line', showSymbol:false, connectNulls:true,
+       lineStyle:{width:2.2, color: m==='ic' ? '#1a5fb4' : '#b3261e'},
+       itemStyle:{color: m==='ic' ? '#1a5fb4' : '#b3261e'}, data:roll(raw,20)}]});
+}
+function drawStats(){
+  const {h} = cur();
+  const d = DIAG[h] || {};
+  const sm = d.ic_summary || {};
+  const fmt = v => (v==null) ? '—' : (+v).toFixed(4);
+  document.getElementById('vIC').textContent = fmt(sm.ic && sm.ic.mean);
+  document.getElementById('vR').textContent = fmt(sm.rank_ic && sm.rank_ic.mean);
+  document.getElementById('vIcir').textContent = fmt(sm.rank_ic && sm.rank_ic.icir);
+  document.getElementById('vT').textContent = fmt(sm.rank_ic && sm.rank_ic.t_stat);
+  document.getElementById('vCov').textContent = sm.coverage_mean==null ? '—' : (sm.coverage_mean*100).toFixed(1)+'%';
+  document.getElementById('vMono').textContent = fmt((d.quantile_summary || {}).monotonicity_spearman);
+  const pos = (x)=> (x!=null && x>0) ? 'pos' : 'neg';
+  document.getElementById('vIC').className = 'v ' + pos(sm.ic && sm.ic.mean);
+  document.getElementById('vR').className = 'v ' + pos(sm.rank_ic && sm.rank_ic.mean);
+}
+function redraw(){ drawIC(); drawStats(); }
+document.getElementById('hSel').addEventListener('change', redraw);
+document.getElementById('mSel').addEventListener('change', redraw);
+redraw();
+window.addEventListener('resize', ()=>charts.forEach(c=>c && c.resize()));
+</script>
+{% endblock %}

@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}任务 {{ job.id }} · QuantLab{% endblock %}
+{% block content %}
+<div class="crumb"><a href="/factors">因子库</a> / 任务 {{ job.id }}</div>
+<div class="page-head">
+  <div>
+    <h1>{{ '批量重算' if job.kind == 'refresh' else '批量删除' }}
+      <span class="badge {{ 'gp' if job.status == 'SUCCESS' else ('user' if job.status == 'RUNNING' else 'builtin') }}">{{ job.status }}</span></h1>
+    <p class="lead mono">job {{ job.id }} · 共 {{ job.total }} 个因子</p>
+  </div>
+  <div class="toolbar"><a class="btn ghost" href="/factors">← 因子库</a></div>
+</div>
+
+<div class="card" style="margin-top:14px;">
+  <div class="k" id="stage">{{ job.stage or '排队中' }}</div>
+  <div class="progress" style="margin-top:10px;"><div id="bar" style="width:{{ (job.progress*100)|round(1) }}%"></div></div>
+  <div class="n mono" style="margin-top:8px;"><span id="cnt">{{ job.done }} / {{ job.total }}</span>
+    <span id="msg" class="neg">{{ job.message or '' }}</span></div>
+</div>
+
+<div id="failed" style="display:none" class="card bad" style="margin-top:12px;">
+  <div class="k neg">任务失败</div><div class="n" id="failMsg"></div>
+</div>
+
+<script>
+const JOB = {{ job.id|tojson }};
+const DONE = {{ 'true' if job.status in ('SUCCESS','FAILED') else 'false' }};
+const bar = document.getElementById('bar'), cnt = document.getElementById('cnt');
+const stage = document.getElementById('stage'), msg = document.getElementById('msg');
+let finished = DONE;
+if (DONE) { location.replace('/jobs/' + JOB + '/done'); }
+
+async function poll(){
+  if (finished) return;
+  try {
+    const j = await (await fetch('/api/jobs/' + JOB)).json();
+    bar.style.width = ((j.progress || 0) * 100).toFixed(1) + '%';
+    cnt.textContent = j.done + ' / ' + j.total;
+    stage.textContent = j.stage || j.status;
+    if (j.message) msg.textContent = j.message;
+    if (j.status === 'SUCCESS' || j.status === 'FAILED'){
+      finished = true;
+      location.replace('/jobs/' + JOB + '/done');
+      return;
+    }
+  } catch (e) { /* 网络抖动继续轮询 */ }
+  setTimeout(poll, 1200);
+}
+poll();
+</script>
+{% endblock %}

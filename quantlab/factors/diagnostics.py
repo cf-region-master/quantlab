@@ -1,0 +1,187 @@
+"""因子诊断（Project1 分析模块）：IC / Rank IC / 覆盖率 / 分组收益。
+
+公式约定（与课程要求一致）：
+  IC(h)_t      = Corr_{i∈S_t}( f_{i,t} , y_{i,t}^{(h)} )          Pearson
+  RankIC(h)_t  = Corr_{i∈S_t}( rank(f_{i,t}), rank(y_{i,t}^{(h)}) )  Spearman（并列平均秩）
+  y_{i,t}^{(h)}= C_{i,t+h}/C_{i,t} - 1（后复权收盘价）
+  R_{k,t}      = 组内等权平均收益（对有效标签）；Spread_t = R_{K,t} - R_{1,t}
+
+纪律：
+  - 事先设定最低样本数 min_cross_section_samples；常数或样本不足当日记缺失（NaN），不改成 0
+  - 标签缺失时报告原分组人数与有效人数，不重新分组
+  - 重叠标签的分组收益是描述性结果，不复利、不当作策略净值
+"""
+from __future__ import annotations
+
+from typing import Any
+
+import numpy as np
+import pandas as pd
+from scipy import stats as sps
+
+
+def forward_return(close_adj: pd.DataFrame, h: int) -> pd.DataFrame:
+    """形成日 t、持有 h 个交易日的标签：C(t+h)/C(t)-1。样本末端不足 h 日记缺失。"""
+    return close_adj.shift(-h) / close_adj - 1
+
+
+def _cross_corr(x: np.ndarray, y: np.ndarray, method: str) -> float:
+    """截面相关系数。method ∈ pearson | spearman | kendall（对齐参考实现的 ic_method）。"""
+    m = np.isfinite(x) & np.isfinite(y)
+    if m.sum() < 3:
+        return np.nan
+    xv, yv = x[m], y[m]
+    if np.std(xv) < 1e-12 or np.std(yv) < 1e-12:  # 常数序列记缺失，不改成 0
+        return np.nan
+    if method == "pearson":
+        return float(np.corrcoef(xv, yv)[0, 1])
+    if method == "kendall":
+        return float(sps.kendalltau(xv, yv).statistic)
+    if method == "spearman":
+        xv = pd.Series(xv).rank(method="average").to_numpy()
+        yv = pd.Series(yv).rank(method="average").to_numpy()
+        return float(np.corrcoef(xv, yv)[0, 1])
+    raise KeyError(f"未知 IC 口径: {method}")
+
+
+def ic_table(factor: pd.DataFrame, y: pd.DataFrame, min_n: int,
+             ic_method: str = "pearson") -> pd.DataFrame:
+    """逐日 IC / RankIC / 有效资产数 / 覆盖率。
+
+    `ic` 列按 ic_method 计算（pearson | spearman | kendall），`rank_ic` 列固定为
+    Spearman 秩相关。两者都留：ic_method 决定报告里的"主 IC 口径"，另一列作为对照。
+    """
+    farr, yarr = factor.to_numpy(dtype="float64"), y.to_numpy(dtype="float64")
+    rows = []
+    for i in range(farr.shape[0]):
+        x, yv = farr[i], yarr[i]
+        n = int((np.isfinite(x) & np.isfinite(yv)).sum())
+        ic = _cross_corr(x, yv, ic_method)
+        ric = _cross_corr(x, yv, "spearman")
+        if n < min_n:
+            ic = ric = np.nan
+        rows.append({"date": factor.index[i], "ic": ic, "rank_ic": ric, "n_valid": n,
+                     "coverage": n / max(1, factor.shape[1])})
+    return pd.DataFrame(rows).set_index("date")
+
+
+def ic_summary(table: pd.DataFrame) -> dict[str, Any]:
+    """IC 时间序列的均值/标准差/ICIR/t 统计量（描述性）。"""
+    out = {}
+    for col in ("ic", "rank_ic"):
+        s = table[col].dropna()
+        n = len(s)
+        out[col] = {
+            "n_obs": n,
+            "mean": float(s.mean()) if n else np.nan,
+            "std": float(s.std(ddof=1)) if n > 1 else np.nan,
+            "t_stat": float(s.mean() / (s.std(ddof=1) / np.sqrt(n))) if n > 2 else np.nan,
+            "icir": float(s.mean() / s.std(ddof=1)) if n > 1 and s.std(ddof=1) > 0 else np.nan,
+            "win_rate": float((s > 0).mean()) if n else np.nan,
+        }
+    out["coverage_mean"] = float(table["coverage"].mean())
+    out["n_valid_mean"] = float(table["n_valid"].mean())
+    return out
+
+
+def quantile_table(factor: pd.DataFrame, y: pd.DataFrame, k: int, min_n: int) -> dict[str, Any]:
+    """形成日按因子升序分 K 组（并列平均秩定序，次序键=资产代码保证确定性）。
+
+    逐日返回：各组 n_formed（按因子分组人数）与 n_valid（组内标签有效人数，不重新分组）。
+    样本不足规则：形成日有效因子数 < max(min_n, k) 时整日记缺失（跳过），
+    与 IC 路径共用 min_cross_section_samples，避免"事先设最低样本要求"只作用于 IC。
+    """
+    farr, yarr = factor.to_numpy(dtype="float64"), y.to_numpy(dtype="float64")
+    codes = np.array(factor.columns)
+    need = max(int(min_n), int(k))
+    daily_rows = []
+    n_skipped_insufficient = 0
+    for i in range(farr.shape[0]):
+        x, yv = farr[i], yarr[i]
+        m = np.isfinite(x)
+        if m.sum() < need:  # 少于组数或低于最低样本要求 -> 记缺失，不改 0、不重新分组
+            n_skipped_insufficient += 1
+            continue
+        idx = np.where(m)[0]
+        # 稳定排序：因子秩升序，并列时按资产代码
+        order = sorted(idx, key=lambda j: (x[j], str(codes[j])))
+        bins = np.array_split(np.array(order), k)
+        row = {"date": factor.index[i]}
+        for g, members in enumerate(bins, start=1):
+            ys = yv[members]
+            valid = np.isfinite(ys)
+            row[f"g{g}_n_formed"] = len(members)
+            row[f"g{g}_n_valid"] = int(valid.sum())
+            row[f"g{g}_ret"] = float(np.nanmean(ys[valid])) if valid.sum() >= 1 else np.nan
+        daily_rows.append(row)
+    daily = pd.DataFrame(daily_rows).set_index("date") if daily_rows else pd.DataFrame()
+
+    group_mean = {g: (daily[f"g{g}_ret"].mean() if f"g{g}_ret" in daily else np.nan)
+                  for g in range(1, k + 1)}
+    spread = (daily[f"g{k}_ret"] - daily["g1_ret"]) if f"g{k}_ret" in daily and "g1_ret" in daily else pd.Series(dtype="float64")
+    gm = np.array([group_mean[g] for g in range(1, k + 1)], dtype="float64")
+    mono = float(sps.spearmanr(np.arange(1, k + 1), gm).statistic) if np.isfinite(gm).all() else np.nan
+    summary = {
+        "group_mean_return": {f"g{g}": (None if not np.isfinite(group_mean[g]) else float(group_mean[g]))
+                              for g in range(1, k + 1)},
+        "spread_mean": float(spread.mean()) if len(spread) else np.nan,
+        "spread_annualized_note": "日均价差，未扣费，不等于可执行多空收益",
+        "monotonicity_spearman": mono,
+        "n_days": int(len(daily)),
+        "n_days_skipped_insufficient": int(n_skipped_insufficient),
+        "min_cross_section_samples": int(min_n),
+        "form_and_valid_example": {
+            "first_date_formed": {f"g{g}": {"n_formed": int(daily.iloc[0][f"g{g}_n_formed"]),
+                                            "n_valid": int(daily.iloc[0][f"g{g}_n_valid"])}
+                                  for g in range(1, k + 1)} if len(daily) else {},
+        },
+    }
+    return {"daily": daily, "summary": summary}
+
+
+def run_diagnostics(factor_values: pd.DataFrame, close_adj: pd.DataFrame,
+                    diag_cfg: dict) -> dict[str, Any]:
+    """对单个因子值面板执行完整诊断，返回 {horizon: {...}}。
+
+    diag_cfg:
+      horizon_days               [5, 20]       持有期 h
+      min_cross_section_samples  10            最低截面样本
+      quantile_groups            5             分层组数 K
+      ic_method                  'pearson'     IC 相关系数口径（pearson|spearman|kendall）
+    """
+    min_n = int(diag_cfg.get("min_cross_section_samples", 10))
+    k = int(diag_cfg.get("quantile_groups", 5))
+    ic_method = str(diag_cfg.get("ic_method", "pearson"))
+    results: dict[str, Any] = {}
+    for h in diag_cfg.get("horizon_days", [5, 20]):
+        y = forward_return(close_adj, h)
+        table = ic_table(factor_values, y, min_n, ic_method)
+        qt = quantile_table(factor_values, y, k, min_n)
+        results[str(h)] = {
+            "horizon": h,
+            "ic_method": ic_method,
+            "quantile_groups": k,
+            "ic_table": table,
+            "ic_summary": ic_summary(table),
+            "quantile_summary": qt["summary"],
+            "quantile_daily": qt["daily"],
+        }
+    return results
+
+
+def diagnostics_json(results: dict[str, Any]) -> dict[str, Any]:
+    """可 JSON 化的诊断结果（不含逐日明细大表）。"""
+    out = {}
+    for h, r in results.items():
+        t = r["ic_table"]
+        out[h] = {
+            "horizon": r["horizon"],
+            "ic_summary": r["ic_summary"],
+            "quantile_summary": r["quantile_summary"],
+            "ic_series": {"index": [str(d.date()) for d in t.index],
+                          "ic": [None if not np.isfinite(v) else float(v) for v in t["ic"]],
+                          "rank_ic": [None if not np.isfinite(v) else float(v) for v in t["rank_ic"]],
+                          "n_valid": [int(v) for v in t["n_valid"]],
+                          "coverage": [float(v) for v in t["coverage"]]},
+        }
+    return out

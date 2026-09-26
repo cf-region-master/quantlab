@@ -1,0 +1,860 @@
+"""QuantLab Web 平台（课程复现版）：因子库 / 策略库 / 算法实验室 / 复现包。
+
+长任务交互：挖掘任务创建后返回 202 + task_id，前端轮询 /api/lab/tasks/{id}；
+策略回测秒级完成，采用同步创建。API 与页面共用同一服务层（store）。
+"""
+from __future__ import annotations
+
+import json
+import threading
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pandas as pd
+from fastapi import BackgroundTasks, Body, FastAPI, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
+
+from ..config import ROOT
+from ..factors.preprocess import (PREPROCESS_SCHEMA, normalize_spec, short_label,
+                                  spec_steps)
+from ..storage import store
+from ..storage.db import (AlgoCandidate, AlgoTask, BacktestRun, Factor, FactorMetric, Signal,
+                          StockPool, get_session, init_db)
+
+app = FastAPI(title="QuantLab 量化因子挖掘平台（Project1）")
+templates = Jinja2Templates(directory=str(ROOT / "quantlab" / "web" / "templates"))
+# 参数值的短中文标签（参数总表「当前值」列用）
+templates.env.globals["short_label"] = short_label
+app.mount("/static", StaticFiles(directory=str(ROOT / "quantlab" / "web" / "static")), name="static")
+
+
+@app.on_event("startup")
+def _startup() -> None:
+    init_db()
+    # 内置股票池必须在启动时补齐：缺了它，因子页/回测页的「股票池」下拉是空的，
+    # 用户无从选择（历史 bug：这里只调了 seed_from_latest_run）。
+    try:
+        n_pool = store.ensure_default_pools()
+        print(f"[startup] 内置股票池补齐 {n_pool} 个，现有 {len(store.list_pools())} 个")
+    except Exception as e:  # noqa: BLE001
+        print(f"[startup] 股票池初始化失败: {e}")
+    try:
+        n = store.seed_from_latest_run()
+        print(f"[startup] 因子库种子导入 {n} 条")
+    except Exception as e:  # noqa: BLE001 —— 数据未就绪时页面仍可访问
+        print(f"[startup] 种子导入跳过: {e}")
+    # 历史信号补算「分层净值」（诊断的附属统计量）：耗时，放后台线程，不拖慢启动
+    def _backfill():
+        try:
+            k = store.backfill_signal_diagnostics()
+            if k:
+                print(f"[startup] 已为 {k} 个历史信号补算分层净值")
+        except Exception as e:  # noqa: BLE001
+            print(f"[startup] 信号补算跳过: {e}")
+
+    threading.Thread(target=_backfill, daemon=True).start()
+
+
+def _df_series_json(s: pd.Series) -> dict:
+    return {"index": [str(d.date()) for d in s.index],
+            "values": [None if not np.isfinite(v) else round(float(v), 6) for v in s]}
+
+
+# ---------------- 回测检查：门禁/信息项的可读化 ----------------
+_GATE_LABELS = {
+    "nav_vs_daily_return": "净值 ↔ 日收益一致",
+    "cumulative_return_consistent": "累计收益三源互证",
+    "cost_ledger": "交易成本账本",
+    "weights_cash_conservation": "权重 + 现金守恒",
+    "cash_non_negative": "现金非负",
+    "no_lookahead": "无前视",
+    "events_logged": "异常与缺失留痕",
+    "gross_net_attribution": "毛净归因口径",
+    "output_hash": "重复运行指纹",
+}
+
+
+def _fmt_val(v) -> str:
+    if isinstance(v, bool):
+        return "是" if v else "否"
+    if isinstance(v, float):
+        return f"{v:.4g}"
+    if isinstance(v, list):
+        return f"{len(v)} 项"
+    if isinstance(v, str):
+        return v[:48]
+    return str(v)
+
+
+def _gate_detail(name: str, spec: dict) -> str:
+    """按检查名挑出最该看的几个字段，避免把整个 dict 糊在页面上。"""
+    pick = {
+        "nav_vs_daily_return": ["max_abs_diff", "tolerance"],
+        "cumulative_return_consistent": ["cumulative_return", "from_daily_return_product",
+                                         "from_metrics"],
+        "cost_ledger": ["ledger_sum", "n_fee_mismatch", "n_invalid_execution"],
+        "weights_cash_conservation": ["max_relative_residual"],
+        "cash_non_negative": ["min_cash", "n_days_negative", "n_days"],
+        "no_lookahead": ["n_rebalances", "n_bad_schedule", "n_bad_composition",
+                         "n_target_mismatch", "signal_independently_recomputed"],
+        "events_logged": ["n_events"],
+        "gross_net_attribution": ["convention", "n_trades_differing_notional", "n_trades_net",
+                                  "max_notional_diff"],
+        "output_hash": ["sha256"],
+    }.get(name, [])
+    keys = pick or [k for k in spec if k not in ("pass", "note", "tolerance", "gates")][:3]
+    parts = []
+    for k in keys:
+        if k in spec and spec[k] is not None:
+            v = spec[k]
+            if k == "sha256":
+                v = str(v)[:16] + "…"
+            parts.append(f"{k}={_fmt_val(v)}")
+    return " · ".join(parts)
+
+
+def _gate_rows(checks: dict) -> list[dict]:
+    """把 checks 拆成展示行：门禁项（有 pass）在前，信息项在后。"""
+    rows = []
+    for name, spec in (checks or {}).items():
+        if not isinstance(spec, dict) or name in ("gates", "all_pass"):
+            continue
+        is_gate = "pass" in spec
+        rows.append({
+            "name": name,
+            "label": _GATE_LABELS.get(name, name),
+            "gate": is_gate,
+            "pass": bool(spec.get("pass")) if is_gate else None,
+            "note": spec.get("note", ""),
+            "detail": _gate_detail(name, spec),
+        })
+    rows.sort(key=lambda r: (not r["gate"], r["name"]))
+    return rows
+
+
+# ---------------- 页面 ----------------
+@app.get("/", response_class=HTMLResponse)
+def page_index(request: Request):
+    s = get_session()
+    try:
+        ctx = {
+            "n_factors": s.query(Factor).count(),
+            "n_strategies": s.query(Signal).count(),
+            "n_backtests": s.query(BacktestRun).count(),
+            "n_tasks": s.query(AlgoTask).count(),
+            "n_adopted": s.query(AlgoCandidate).filter_by(adopted=True).count(),
+        }
+    finally:
+        s.close()
+    md = None
+    try:
+        md = store.market()
+        ctx["data"] = md.quality["aggregate"]
+        ctx["period"] = [str(md.dates.min().date()), str(md.dates.max().date())]
+    except Exception:
+        ctx["data"] = None
+    run = store.latest_run_dir()
+    ctx["run"] = run.name if run else None
+    if run and (run / "manifest.json").exists():
+        mf = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
+        ctx["run_env"] = mf.get("environment", {})
+        ctx["run_checks_pass"] = mf.get("checks", {}).get("base_backtest_all_pass")
+    return templates.TemplateResponse(request, "index.html", ctx)
+
+
+@app.get("/factors", response_class=HTMLResponse)
+def page_factors(request: Request, show_hidden: int = 0):
+    s = get_session()
+    try:
+        q = s.query(Factor).order_by(Factor.id)
+        if not show_hidden:
+            q = q.filter(Factor.hidden.isnot(True))     # 隐藏因子默认不露出
+        factors = q.all()
+        mets = s.query(FactorMetric).all()
+        by_factor: dict[int, dict[int, FactorMetric]] = {}
+        for m in mets:
+            by_factor.setdefault(m.factor_id, {})[m.horizon] = m
+        n_hidden = s.query(Factor).filter(Factor.hidden.is_(True)).count()
+        rows = []
+        for f in factors:
+            mm = by_factor.get(f.id, {})
+            rows.append({"f": f, "m5": mm.get(5), "m20": mm.get(20)})
+    finally:
+        s.close()
+    mk = store.market()
+    return templates.TemplateResponse(request, "factors.html", {
+        "rows": rows, "pools": store.list_pools(),
+        "n_hidden": n_hidden, "show_hidden": bool(show_hidden),
+        "data_start": str(mk.dates.min().date()), "data_end": str(mk.dates.max().date()),
+        "spec_schema": PREPROCESS_SCHEMA,
+        "neutralize_choices": PREPROCESS_SCHEMA["neutralize"]["method"]["choices"],
+    })
+
+
+def _spec_from_form(form) -> dict:
+    """从表单里收集参数（字段名与 PREPROCESS_SCHEMA / 参考契约的扁平键一致）。
+
+    覆盖：预处理（fillna / outlier / normalize / neutralize）+ 评估口径
+    （ic_method / horizons / quantile / adjust）。
+    """
+    keys = ("fillna_method", "fillna_limit",
+            "outlier_method", "alpha", "k",
+            "normalize_method", "min_n",
+            "neutralize_method", "neutralize_level", "neutralize_min_n",
+            "ic_method", "horizons", "quantile", "adjust")
+    raw = {k: form.get(k) for k in keys if form.get(k) is not None}
+    return normalize_spec(raw)
+
+
+@app.get("/factors/new", response_class=HTMLResponse)
+def page_factor_new(request: Request):
+    from ..factors.user_code import FACTOR_CODE_TEMPLATE, ALLOWED_MODULES
+    mk = store.market()
+    return templates.TemplateResponse(request, "factor_new.html", {
+        "template_code": FACTOR_CODE_TEMPLATE,
+        "allowed_modules": ", ".join(sorted(ALLOWED_MODULES)),
+        "data_start": str(mk.dates.min().date()), "data_end": str(mk.dates.max().date()),
+        "n_codes": len(mk.codes), "n_days": len(mk.dates),
+        "fields": list(mk.fields.keys()),
+    })
+
+
+@app.get("/factors/{factor_id}", response_class=HTMLResponse)
+def page_factor_detail(request: Request, factor_id: int):
+    s = get_session()
+    try:
+        f = s.get(Factor, factor_id)
+        if f is None:
+            raise HTTPException(404)
+        metrics = s.query(FactorMetric).filter_by(factor_id=factor_id).all()
+        # 每个持有期一份 {IC/分层 诊断 + 分层净值附属统计量}
+        diag = {m.horizon: (m.summary_json or {}).get(str(m.horizon), {}) for m in metrics}
+        policy = store.factor_data_policy(f)
+        spec = f.preprocess_spec
+    finally:
+        s.close()
+    mk = store.market()
+    return templates.TemplateResponse(request, "factor_detail.html", {
+        "f": f, "diag": diag, "policy": policy, "spec": spec,
+        "spec_schema": PREPROCESS_SCHEMA, "spec_steps": spec_steps(spec),
+        "pools": store.list_pools(),
+        "data_start": str(mk.dates.min().date()), "data_end": str(mk.dates.max().date()),
+        "n_codes": len(mk.codes),
+        "ly_prefix": "fac",
+    })
+
+
+@app.get("/signals", response_class=HTMLResponse)
+def page_signals(request: Request):
+    """策略库 = 信号列表。信号是纯权重定义，可像因子一样做诊断，可被回测多次。"""
+    return templates.TemplateResponse(request, "signals.html",
+                                      {"signals": store.list_signals()})
+
+
+@app.get("/signals/new", response_class=HTMLResponse)
+def page_signal_new(request: Request, factors: str = ""):
+    s = get_session()
+    try:
+        facs = s.query(Factor).all()
+        mets = {m.factor_id: m for m in s.query(FactorMetric).filter_by(horizon=20).all()}
+    finally:
+        s.close()
+    mk = store.market()
+    # 从因子库「构成策略」带过来的预选因子
+    preselect = [int(x) for x in str(factors).split(",") if str(x).strip().isdigit()]
+    # 因子值的最晚起始覆盖：页面据此提示"模型预热窗口够不够"，而不是写死一句话
+    starts = [str(f.value_start.date()) for f in facs if f.value_start]
+    return templates.TemplateResponse(request, "signal_new.html", {
+        "factors": facs, "mets": mets, "preselect": preselect,
+        "fac_min_start": max(starts) if starts else None,
+        "data_start": str(mk.dates.min().date()),
+        "data_end": str(mk.dates.max().date()),
+        "n_codes": len(mk.codes),
+    })
+
+
+@app.get("/signals/{sid}", response_class=HTMLResponse)
+def page_signal_detail(request: Request, sid: int):
+    sig = store.get_signal(sid)
+    if sig is None:
+        raise HTTPException(404)
+    s = get_session()
+    try:
+        fac_names = {f.id: f.name for f in s.query(Factor).all()}
+    finally:
+        s.close()
+    diag = sig.get("diagnostics_json") or {}
+    return templates.TemplateResponse(request, "signal_detail.html", {
+        "sig": sig, "fac_names": fac_names, "diag": diag,
+        "backtests": store.list_backtests(signal_id=sid),
+        "pools": store.list_pools(),
+        "factor_ids": [c["factor_id"] for c in (sig.get("components") or [])],
+        "ly_prefix": "sig",
+    })
+
+
+# 说明：信号的分层净值现在是诊断的附属统计量（diagnose_signal 里随 IC 一起算），
+# 与因子页共用 factors/layers.py 与同一个图表块；服务端不再有"跑分层回测"入口，
+# /api/signals/{id}/layered/{key} 与 /api/layered/{kind}/... 一并下线。
+
+
+@app.get("/backtests", response_class=HTMLResponse)
+def page_backtests(request: Request):
+    """回测记录：一个信号可对应多条。"""
+    rows = []
+    for b in store.list_backtests():
+        sig = store.get_signal(b["signal_id"]) or {}
+        m = (b.get("metrics_json") or {}).get("net") or {}
+        rows.append({**b, "signal_name": sig.get("name", f"#{b['signal_id']}"),
+                     "annualized_return": m.get("annualized_return"),
+                     "sharpe": m.get("annualized_sharpe"),
+                     "max_drawdown": m.get("max_drawdown"),
+                     "all_pass": (b.get("checks_json") or {}).get("all_pass")})
+    return templates.TemplateResponse(request, "backtests.html", {"rows": rows})
+
+
+@app.get("/backtests/new", response_class=HTMLResponse)
+def page_backtest_new(request: Request, signal_id: int | None = None):
+    from ..config import load_config
+    cfg = load_config()
+    mk = store.market()
+    sig = store.get_signal(signal_id) if signal_id else None
+    return templates.TemplateResponse(request, "backtest_new.html", {
+        "signals": store.list_signals(), "pools": store.list_pools(),
+        "sig": sig, "cost": cfg.backtest["cost"],
+        "portfolio": cfg.backtest["portfolio"],
+        "last": store.last_backtest_config(),
+        "data_start": str(mk.dates.min().date()), "data_end": str(mk.dates.max().date()),
+        "initial_cash": cfg.backtest.get("initial_cash", 1_000_000),
+    })
+
+
+@app.get("/backtests/{bid}", response_class=HTMLResponse)
+def page_backtest_detail(request: Request, bid: int):
+    run = store.backtest_result(bid)
+    if run is None:
+        raise HTTPException(404)
+    from ..config import load_config
+    cfg = load_config()
+    chart_json = {k: run.get(k) for k in
+                  ("nav", "nav_gross", "benchmark", "turnover", "cost_series") if run.get(k)}
+    runs = store.list_backtests()
+    meta = next((b for b in runs if b["id"] == bid), {})
+    sig = store.get_signal(meta.get("signal_id")) if meta.get("signal_id") else None
+    return templates.TemplateResponse(request, "backtest_detail.html", {
+        "res": run, "meta": meta, "sig": sig,
+        "nav": run.get("nav", {"index": [], "values": []}),
+        "rf_annual": float(cfg.data["risk_free_annual"]),
+        "gn": (run.get("checks") or {}).get("gross_net_attribution") or {},
+        "gates": _gate_rows(run.get("checks") or {}),
+        "chart_json": chart_json,
+    })
+
+
+@app.get("/strategies", response_class=HTMLResponse)
+def page_strategies_redirect():
+    return RedirectResponse("/signals", status_code=307)
+
+
+@app.get("/lab", response_class=HTMLResponse)
+def page_lab(request: Request):
+    s = get_session()
+    try:
+        tasks = s.query(AlgoTask).order_by(AlgoTask.created_at.desc()).all()
+        from sqlalchemy import func as _f
+        counts = dict(s.query(AlgoCandidate.task_id, _f.count(AlgoCandidate.id))
+                      .group_by(AlgoCandidate.task_id).all())
+    finally:
+        s.close()
+    mk = store.market()
+    _ = mk          # 页面不再展示本地行情说明，保留读取以便口径变更时报警
+    return templates.TemplateResponse(request, "lab.html",
+                                      {"tasks": tasks, "cand_counts": counts,
+                                       "engines": store.engines(),
+                                       "schema": store.GP_PARAMS_SCHEMA,
+                                       "ag_schema": store.ALPHAGEN_PARAMS_SCHEMA,
+                                       "spec_schema": PREPROCESS_SCHEMA,
+                                       "pools": store.list_pools(),
+                                       "last": store.last_task_params(),
+                                       "data_start": str(mk.dates.min().date()),
+                                       "data_end": str(mk.dates.max().date())})
+
+
+@app.get("/lab/tasks/{task_id}", response_class=HTMLResponse)
+def page_lab_task(request: Request, task_id: str):
+    s = get_session()
+    try:
+        t = s.get(AlgoTask, task_id)
+        if t is None:
+            raise HTTPException(404)
+        cands = s.query(AlgoCandidate).filter_by(task_id=task_id).order_by(AlgoCandidate.train_ic.desc()).all()
+    finally:
+        s.close()
+    return templates.TemplateResponse(request, "lab_task.html", {
+        "t": t, "cands": cands,
+        # curve 单独喂给图表，避免在"指标"里重复打印整段训练曲线
+        "metrics_wo_curve": {k: v for k, v in (t.metrics_json or {}).items() if k != "curve"},
+    })
+
+
+# 说明：原「复现包 /repro」「运行记录 /runs」两个页面已按需求从前端下线。
+# 复现信息仍完整保留在研究报告（reports/研究报告.md|pdf）与 reports/runs/<id>/manifest.json 中，
+# 机器可读接口保留在 /api/runs（供外部脚本与复核使用）。
+
+
+# ---------------- 表单动作 ----------------
+@app.post("/signals/new")
+def action_create_signal(request: Request, name: str = Form(...),
+                         description: str = Form(""),
+                         factor_ids: list[int] = Form(...),
+                         model_type: str = Form("equal_weight"),
+                         start_date: str = Form(...),
+                         end_date: str = Form(...),
+                         refit_days: int = Form(20),
+                         train_window: int = Form(252),
+                         purge: int = Form(5)):
+    if not 1 <= len(factor_ids) <= 10:
+        raise HTTPException(422, "需选择 1~10 个因子")
+    params = {}
+    if model_type in ("linear", "tree"):
+        params = {"refit_days": int(refit_days), "train_window": int(train_window),
+                  "purge": int(purge)}
+    try:
+        r = store.create_signal(name=name, description=description, factor_ids=factor_ids,
+                                model_type=model_type, model_params=params,
+                                start_date=start_date, end_date=end_date)
+    except Exception as e:  # noqa: BLE001 —— 表单错误回显
+        return HTMLResponse(f"<h3>创建失败：{e}</h3><a href='/signals/new'>返回</a>", status_code=400)
+    return RedirectResponse(f"/signals/{r['id']}", status_code=303)
+
+
+@app.post("/backtests/new")
+def action_run_backtest(request: Request, signal_id: int = Form(...),
+                        start_date: str = Form(...), end_date: str = Form(...),
+                        pool_id: int = Form(...), top_n: int = Form(10),
+                        weighting: str = Form("equal_weight"),
+                        rebalance_freq: str = Form("weekly"),
+                        initial_cash: float = Form(1_000_000.0),
+                        commission_buy: float = Form(...),
+                        commission_sell: float = Form(...),
+                        slippage: float = Form(0.0)):
+    try:
+        r = store.run_backtest_for_signal(
+            signal_id=signal_id, start_date=start_date, end_date=end_date,
+            pool_id=pool_id or None, top_n=top_n, weighting=weighting,
+            rebalance_freq=rebalance_freq, initial_cash=initial_cash,
+            cost_override={"commission_buy": commission_buy,
+                           "commission_sell": commission_sell, "slippage": slippage})
+    except Exception as e:  # noqa: BLE001 —— 表单错误回显
+        return HTMLResponse(
+            f"<h3>回测失败：{e}</h3><a href='/backtests/new?signal_id={signal_id}'>返回</a>",
+            status_code=400)
+    return RedirectResponse(f"/backtests/{r['id']}", status_code=303)
+
+
+@app.post("/factors/new")
+def action_create_factor(request: Request, name: str = Form(...),
+                         code: str = Form(...), description: str = Form(""),
+                         hypothesis: str = Form(""), direction: str = Form(""),
+                         missing_policy: str = Form(""),
+                         failure_modes: str = Form(""),
+                         adjust: str = Form("hfq")):
+    from ..factors.user_code import FactorCodeError
+    fm = [x.strip() for x in failure_modes.split(";") if x.strip()]
+    try:
+        r = store.register_user_factor(
+            name=name, code=code, description=description, hypothesis=hypothesis,
+            direction=direction, missing_policy=missing_policy, failure_modes=fm,
+            adjust=adjust if adjust in ("hfq", "qfq") else "hfq")
+    except FactorCodeError as e:
+        # 代码错误回显给用户（含行内错误详情），不写入库
+        return HTMLResponse(
+            "<h3>因子代码有问题，未入库</h3>"
+            f"<pre class='log' style='max-height:260px'>{e}</pre>"
+            "<p><a href='/factors/new'>返回修改</a></p>", status_code=400)
+    except Exception as e:  # noqa: BLE001
+        return HTMLResponse(
+            f"<h3>登记失败：{type(e).__name__}: {e}</h3><a href='/factors/new'>返回</a>",
+            status_code=400)
+    return RedirectResponse(f"/factors/{r['id']}", status_code=303)
+
+
+@app.get("/api/factors/{factor_id}/pool-impact")
+def api_factor_pool_impact(factor_id: int, pool_id: int | None = None):
+    """换池影响预览（只读）：用于前端在提交前展示"截面会变"的警告。"""
+    try:
+        return store.factor_pool_impact(factor_id, pool_id)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"{type(e).__name__}: {e}")
+
+
+@app.post("/factors/{factor_id}/refresh")
+async def action_refresh_factor(factor_id: int, request: Request):
+    """单因子重算（因子详情页）：可改股票池、可显式指定区间、可同时改参数（含复权方式）。
+
+    重算要跑 IC + 分层净值（数秒级 CPU 活），因此必须丢到线程池执行：
+    在 async 端点里直接调同步重活会**卡死整个事件循环**，期间所有请求（含静态文件）都没人处理。
+    """
+    form = await request.form()
+    spec = _spec_from_form(form) if form.get("spec_mode") == "set" else None
+    pool_id = None
+    if "pool_id" in form:
+        raw = form.get("pool_id")
+        pool_id = int(raw) if str(raw).strip() else 0     # '' -> 0 = 明确不过滤
+    try:
+        await run_in_threadpool(
+            store.refresh_factor, factor_id, pool_id=pool_id,
+            confirm_pool_change=bool(form.get("confirm_pool_change")),
+            spec=spec,
+            start=form.get("start_date") or None, end=form.get("end_date") or None)
+    except Exception as e:  # noqa: BLE001
+        return HTMLResponse(
+            f"<h3>重算失败：{e}</h3><a href='/factors/{factor_id}'>返回</a>", status_code=400)
+    return RedirectResponse(f"/factors/{factor_id}", status_code=303)
+
+
+# 说明：参数保存与「重算」合并成同一个入口 POST /factors/{id}/refresh
+# （因子详情页那张参数总表就是表单，改完点「保存并重算」一次提交）。
+# 不再单独提供 /factors/{id}/spec，避免同一件事两个入口。
+
+
+@app.post("/factors/batch-refresh")
+async def action_batch_refresh(request: Request):
+    """批量重算：选中的因子 × (计算区间 / 股票池)。**后台执行**，立即返回任务页。
+
+    重算 N 个因子要跑 N×(IC + 分层净值)，是分钟级的 CPU 活。放在请求里同步跑会让浏览器
+    一直挂着（还可能被超时掐断），因此改成后台线程 + 轮询进度。
+    只做「区间 / 股票池」两件事 —— 预处理参数属于单因子的研究设定，在因子详情页逐因子改。
+    """
+    form = await request.form()
+    ids = [int(x) for x in form.getlist("factor_ids") if str(x).strip()]
+    if not ids:
+        return HTMLResponse("<h3>没有选中任何因子</h3><a href='/factors'>返回因子库</a>",
+                            status_code=400)
+    pool_mode = form.get("pool_mode", "keep")
+    if pool_mode == "set":
+        raw = form.get("pool_id")
+        pool_id = int(raw) if str(raw or "").strip() else 0   # '' = 明确不过滤
+    else:
+        pool_id = None                                        # 保持各因子原有池
+    range_mode = form.get("range_mode", "auto")
+    job_id = store.start_batch_job(
+        "refresh", ids,
+        pool_id=pool_id, pool_mode=pool_mode,
+        confirm_pool_change=bool(form.get("confirm_pool_change")),
+        start=(form.get("start_date") or None) if range_mode == "set" else None,
+        end=(form.get("end_date") or None) if range_mode == "set" else None,
+        range_mode=range_mode)
+    return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+
+
+@app.post("/factors/batch-delete")
+async def action_batch_delete(request: Request):
+    """批量删除因子（被信号引用时默认拒绝，需显式 force 才级联删除）。后台执行。"""
+    form = await request.form()
+    ids = [int(x) for x in form.getlist("factor_ids") if str(x).strip()]
+    if not ids:
+        return HTMLResponse("<h3>没有选中任何因子</h3><a href='/factors'>返回因子库</a>",
+                            status_code=400)
+    job_id = store.start_batch_job("delete", ids, force=bool(form.get("force")))
+    return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+
+
+# 说明：「构成策略」不设服务端路由 —— 之前放在 /factors/compose，被先注册的
+# /factors/{factor_id} 抢先匹配，于是把 "compose" 当 factor_id 解析，报 int_parsing。
+# 现在由列表页直接跳 /signals/new?factors=<ids>，少一个路由也少一处冲突。
+
+
+@app.get("/jobs/{job_id}", response_class=HTMLResponse)
+def page_job(request: Request, job_id: str):
+    """后台任务进度页（轮询 /api/jobs/{id}，完成后自动跳到结果页）。"""
+    job = store.get_batch_job(job_id)
+    if job is None:
+        raise HTTPException(404)
+    return templates.TemplateResponse(request, "job.html", {"job": job})
+
+
+@app.get("/api/jobs/{job_id}")
+def api_job(job_id: str):
+    job = store.get_batch_job(job_id)
+    if job is None:
+        raise HTTPException(404)
+    return job
+
+
+@app.get("/jobs/{job_id}/done", response_class=HTMLResponse)
+def page_job_done(request: Request, job_id: str):
+    """任务完成后渲染结果（复用批量结果模板）。"""
+    job = store.get_batch_job(job_id)
+    if job is None:
+        raise HTTPException(404)
+    if job["status"] not in ("SUCCESS", "FAILED"):
+        return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+    res = (job.get("result_json") or {})
+    ctx = {"mode": job["kind"], "res": res, "ids": (job.get("params") or {}).get("ids", []),
+           "job": job}
+    p = job.get("params") or {}
+    ctx.update({k: p.get(k) for k in ("pool_id", "pool_mode", "range_mode", "start", "end")})
+    return templates.TemplateResponse(request, "factor_batch_result.html", ctx)
+
+
+@app.get("/api/factors/{factor_id}/compare")
+def api_factor_compare(factor_id: int, spec: str = ""):
+    """预处理效果对照：把「当前 spec」与「指定 spec」下的因子值/诊断并列返回。
+
+    用于因子页直接验证参数是否真的生效（不写库、只读）。
+    """
+    import json as _json
+
+    from ..factors.diagnostics import run_diagnostics
+    from ..factors.preprocess import apply_preprocess_spec
+
+    s = get_session()
+    try:
+        f = s.get(Factor, factor_id)
+        if f is None:
+            raise HTTPException(404)
+        raw = pd.read_parquet(f.values_path) if f.values_path else None
+        cur = f.preprocess_spec
+        pool_id = f.pool_id
+    finally:
+        s.close()
+    if raw is None:
+        raise HTTPException(404, "该因子没有因子值文件")
+    try:
+        alt = normalize_spec(_json.loads(spec)) if spec else cur
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"spec 解析失败: {e}")
+    mk = store.market()
+    scoped, _ = store._apply_pool(raw, pool_id, mk)  # noqa: SLF001
+    from ..factors.preprocess import normalize_spec as _ns
+    from ..factors.preprocess import parse_horizons as _ph
+    alt_n = _ns(alt)
+    cfg = {"horizon_days": _ph(alt_n["horizons"]),
+           "min_cross_section_samples": int(alt_n["min_n"]),
+           "quantile_groups": int(alt_n["quantile"]),
+           "ic_method": str(alt_n["ic_method"])}
+    out = {}
+    for label, sp in (("current", cur), ("alternative", alt)):
+        p = apply_preprocess_spec(scoped, sp)
+        d = run_diagnostics(p, mk.close_adj, cfg)
+        out[label] = {
+            "spec": sp, "steps": spec_steps(sp),
+            "diagnostics": {
+                h: {"ic_summary": r["ic_summary"], "quantile_summary": r["quantile_summary"]}
+                for h, r in d.items()},
+            "sample": {c: [None if not np.isfinite(x) else round(float(x), 6) for x in p[c].head(120)]
+                       for c in list(p.columns[:5])},
+            "sample_index": [str(x.date()) for x in p.index[:120]],
+        }
+    return out
+
+
+# ---------------- 股票池（券商风格行情页） ----------------
+@app.get("/pools", response_class=HTMLResponse)
+def page_pools(request: Request):
+    return templates.TemplateResponse(request, "pools.html",
+                                      {"pools": store.list_pools_with_stats()})
+
+
+@app.get("/pools/{pool_id}", response_class=HTMLResponse)
+def page_pool_detail(request: Request, pool_id: int):
+    ov = store.pool_overview(pool_id)
+    if ov is None:
+        raise HTTPException(404)
+    lo, hi = store.pool_date_bounds(pool_id)
+    from ..data import fundamentals as _fund
+    return templates.TemplateResponse(request, "pool_detail.html", {
+        "ov": ov, "pool": ov["pool"], "date_lo": lo, "date_hi": hi,
+        "has_fundamentals": _fund.available(),
+        "fund_note": _fund.coverage_note(),
+    })
+
+
+@app.get("/api/pools/{pool_id}/members")
+def api_pool_members(pool_id: int, date: str | None = None, sort: str = "total_mv",
+                     order: str = "desc", limit: int = 0):
+    d = store.pool_members(pool_id, date, sort=sort, order=order, limit=limit)
+    if d is None:
+        raise HTTPException(404)
+    return d
+
+
+@app.get("/api/pools/{pool_id}/overview")
+def api_pool_overview(pool_id: int):
+    d = store.pool_overview(pool_id)
+    if d is None:
+        raise HTTPException(404)
+    return d
+
+
+@app.get("/api/stocks/{code}/ohlc")
+def api_stock_ohlc(code: str, days: int = 250, end: str | None = None):
+    """单只股票的日线 OHLC（复权）+ 成交额，用于池内个股 K 线。"""
+    mk = store.market()
+    c = str(code).zfill(6)
+    if c not in set(mk.codes):
+        raise HTTPException(404, f"本地行情没有 {c}")
+    idx = mk.dates
+    if end:
+        idx = idx[idx <= pd.Timestamp(end)]
+    idx = idx[-int(days):] if days else idx
+    src = {"open": mk.open_adj, "high": mk.high_adj, "low": mk.low_adj,
+           "close": mk.close_adj, "volume": mk.volume, "amount": mk.amount}
+    series = {}
+    for k, df in src.items():
+        v = df[c].reindex(idx)
+        series[k] = [None if not np.isfinite(x) else round(float(x), 4) for x in v]
+    ret = mk.close_adj[c].reindex(idx).pct_change()
+    from ..data import fundamentals as _fund
+    return {"code": c, "name": _fund.name_of(c),
+            "index": [str(d.date()) for d in idx],
+            "ohlc": [[series["open"][i], series["close"][i], series["low"][i], series["high"][i]]
+                     for i in range(len(idx))],
+            "volume": series["volume"], "amount": series["amount"],
+            "close": series["close"],
+            "pct_chg": [None if not np.isfinite(x) else round(float(x), 6) for x in ret],
+            "convention": "价格为后复权（P_adj = P_raw × a(t)/a(τ)），成交额单位为元"}
+
+
+@app.get("/api/pools/{pool_id}/heat")
+def api_pool_heat(pool_id: int, date: str | None = None, top: int = 12):
+    """池内当日领涨/领跌 + 行业分布（页面右侧面板用）。"""
+    d = store.pool_members(pool_id, date, sort="pct_chg", order="desc")
+    if d is None:
+        raise HTTPException(404)
+    rows = [r for r in d["rows"] if r["pct_chg"] is not None]
+    by_ind: dict[str, int] = {}
+    for r in d["rows"]:
+        by_ind[r["industry"] or "未知"] = by_ind.get(r["industry"] or "未知", 0) + 1
+    return {"as_of": d["as_of"], "breadth": d["breadth"],
+            "gainers": rows[: int(top)], "losers": rows[-int(top):][::-1],
+            "industry_dist": sorted(({"industry": k, "n": v} for k, v in by_ind.items()),
+                                    key=lambda x: -x["n"])}
+
+
+class GpTaskCreate(BaseModel):
+    population_size: int = Field(60, ge=10, le=500)
+    generations: int = Field(15, ge=1, le=200)
+    tournament_k: int = Field(4, ge=2, le=20)
+    p_crossover: float = Field(0.7, ge=0.0, le=1.0)
+    p_mutate: float = Field(0.25, ge=0.0, le=1.0)
+    elitism: int = Field(2, ge=1, le=10)
+    horizon: int = Field(5, ge=1, le=60)
+    seed: int = Field(7, ge=0, le=999999)
+
+
+@app.post("/lab/tasks", status_code=202)
+def action_create_task(payload: dict = Body(...)):
+    """统一入口：按 engine_id 分发（gp_daily / alphagen_daily_cpu）。"""
+    engine_id = str(payload.get("engine_id") or "gp_daily")
+    params = {k: v for k, v in payload.items() if k != "engine_id"}
+    try:
+        task_id = store.create_task(engine_id, params)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"{type(e).__name__}: {e}")
+    return JSONResponse({"task_id": task_id, "engine_id": engine_id}, status_code=202)
+
+
+@app.post("/lab/tasks/{task_id}/cancel")
+def action_cancel_task(task_id: str):
+    ok = store.cancel_task(task_id)
+    return {"cancelled": ok}
+
+
+class AdoptRequest(BaseModel):
+    task_id: str
+    candidate_ids: list[int]
+
+
+@app.post("/lab/adopt")
+def action_adopt(payload: AdoptRequest):
+    """人工采纳候选 → 因子库可见（若该候选已被任务自动隐藏入库，则转为可见）。
+
+    沿用任务创建时填的「因子计算参数」，保证入库口径与挖矿时一致。
+    """
+    s = get_session()
+    try:
+        t = s.get(AlgoTask, payload.task_id)
+        spec = store.task_spec(t.params) if t is not None else None
+        pool_id = t.params.get("pool_id") if t is not None else None
+        st = t.params.get("start_date") if t is not None else None
+        en = t.params.get("end_date") if t is not None else None
+    finally:
+        s.close()
+    out = store.adopt_candidates(payload.task_id, payload.candidate_ids,
+                                 hidden=False, spec=spec,
+                                 pool_id=pool_id, start=st, end=en)
+    return JSONResponse({"adopted": out})
+
+
+# ---------------- JSON API ----------------
+@app.get("/api/factors")
+def api_factors():
+    s = get_session()
+    try:
+        fs = s.query(Factor).all()
+        mets = s.query(FactorMetric).all()
+        by_f: dict[int, dict] = {}
+        for m in mets:
+            by_f.setdefault(m.factor_id, {})[m.horizon] = m.summary()
+        return [{"id": f.id, "name": f.name, "source": f.source, "expression": f.expression,
+                 "hash": f.hash_code, "metrics": by_f.get(f.id, {})} for f in fs]
+    finally:
+        s.close()
+
+
+@app.get("/api/factors/{factor_id}/series")
+def api_factor_series(factor_id: int):
+    v = store.factor_values(factor_id)
+    s = get_session()
+    try:
+        metrics = s.query(FactorMetric).filter_by(factor_id=factor_id).all()
+        ic = {m.horizon: (m.summary_json or {}).get(str(m.horizon), {}).get("ic_series") for m in metrics}
+    finally:
+        s.close()
+    # 原实现做 v.ffill() 后再展示，却标注为"因子原始值"：把缺口填成了上一个有效值，
+    # 与项目"缺失值不填零/不填充"的口径冲突。此处保持缺口为 null，由前端断线展示。
+    sample = v.iloc[:, :5]
+    return {"factor_id": factor_id,
+            "values_sample": {"index": [str(d.date()) for d in sample.index],
+                              "series": {c: [None if not np.isfinite(x) else round(float(x), 5)
+                                             for x in sample[c]] for c in sample.columns}},
+            "ic_series": ic}
+
+
+@app.get("/api/lab/tasks/{task_id}")
+def api_task_status(task_id: str):
+    s = get_session()
+    try:
+        t = s.get(AlgoTask, task_id)
+        if t is None:
+            raise HTTPException(404)
+        cands = s.query(AlgoCandidate).filter_by(task_id=task_id).count()
+        d = t.to_dict()
+        d["n_candidates"] = cands
+        curve = (t.metrics_json or {}).get("curve", [])
+        d["curve"] = curve
+        return d
+    finally:
+        s.close()
+
+
+@app.get("/api/runs")
+def api_runs():
+    """全部 run 的机器可读摘要（与 /runs 页面同源）。"""
+    return store.list_run_summaries()
+
+
+@app.get("/api/runs/latest")
+def api_latest_run():
+    run = store.latest_run_dir()
+    if run is None:
+        raise HTTPException(404, "尚无运行记录，请先执行 scripts/run_pipeline.py")
+    mf = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
+    return {"run_id": run.name, "manifest": mf}

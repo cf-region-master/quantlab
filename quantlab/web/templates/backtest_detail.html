@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="crumb"><a href="/backtests">回测</a> / bt{{ meta.id }}</div>
+<div class="page-head">
+  <div>
+    <h1>回测 bt{{ meta.id }}{% if sig %} · <a href="/signals/{{ sig.id }}">{{ sig.name }}</a>{% endif %}</h1>
+    <p class="lead">
+      {{ meta.start_date[:10] }} ~ {{ meta.end_date[:10] }} ·
+      {{ meta.pool_note }} · top {{ meta.top_n }} · {{ meta.weighting }} · {{ meta.rebalance_freq }} ·
+      初始资金 {{ '{:,.0f}'.format(meta.initial_cash or 0) }} 元
+    </p>
+  </div>
+  <div class="toolbar"><a class="btn ghost" href="/backtests/new{% if sig %}?signal_id={{ sig.id }}{% endif %}">再跑一次 →</a></div>
+</div>
+
+{% if res.metrics %}
+<h2>绩效指标（扣费后为主）</h2>
+<div class="metrics">
+  <div class="card accent"><div class="k">累计收益(净)</div><div class="v">
+    {% if res.metrics.net.cumulative_return >= 0 %}<span class="pos">+{{ '%.2f%%'|format(res.metrics.net.cumulative_return*100) }}</span>
+    {% else %}<span class="neg">{{ '%.2f%%'|format(res.metrics.net.cumulative_return*100) }}</span>{% endif %}</div></div>
+  <div class="card accent"><div class="k">年化收益(净)</div><div class="v">
+    {% if res.metrics.net.annualized_return >= 0 %}<span class="pos">+{{ '%.2f%%'|format(res.metrics.net.annualized_return*100) }}</span>
+    {% else %}<span class="neg">{{ '%.2f%%'|format(res.metrics.net.annualized_return*100) }}</span>{% endif %}</div>
+    <div class="n">毛 {{ '%.2f%%'|format(res.metrics.gross.annualized_return*100) if res.metrics.gross and res.metrics.gross.annualized_return is not none else '—' }}</div></div>
+  <div class="card"><div class="k">年化波动</div><div class="v">{{ '%.2f%%'|format(res.metrics.net.annualized_vol*100) }}</div></div>
+  <div class="card"><div class="k">年化 Sharpe</div><div class="v">{{ '%.2f'|format(res.metrics.net.annualized_sharpe) }}</div>
+    <div class="n">rf = {{ rf_annual }}（文档化假设）</div></div>
+  <div class="card"><div class="k">最大回撤</div><div class="v neg">-{{ '%.2f%%'|format(res.metrics.net.max_drawdown*100) }}</div>
+    <div class="n">{{ res.metrics.net.max_drawdown_date or '—' }}</div></div>
+  <div class="card"><div class="k">Calmar</div><div class="v">{{ '%.2f'|format(res.metrics.net.calmar) if res.metrics.net.calmar is not none else '—' }}</div></div>
+  <div class="card"><div class="k">换手合计</div><div class="v">{{ '%.1f'|format(res.metrics.turnover.sum) }}</div>
+    <div class="n">实际调仓 {{ res.metrics.turnover.n_rebalances }} 次</div></div>
+  <div class="card"><div class="k">累计成本</div><div class="v">{{ '{:,.0f}'.format(res.metrics.cost.total_cost_currency) }}</div>
+    <div class="n">占均值净值 {{ '%.2f%%'|format(res.metrics.cost.total_cost_pct_of_avg_nav*100) }} 元</div></div>
+  <div class="card"><div class="k">交易次数</div><div class="v">{{ res.metrics.portfolio.n_trades }}</div>
+    <div class="n">平均持仓 {{ '%.1f'|format(res.metrics.portfolio.avg_holdings) }} · 最大单资产权重 {{ '%.0f%%'|format(res.metrics.portfolio.max_single_weight*100) }}</div></div>
+</div>
+
+{% if gn and gn.convention %}
+<p class="lead" style="margin-top:10px;">
+  <b>毛净归因口径：{{ gn.convention }}</b>
+  {%- if gn.convention != 'same_path' %} —— 目标股数按交易前净值换算，而付过手续费后净值本就不同，
+  故两条序列的仓位规模随之变化：{{ gn.n_trades_differing_notional }}/{{ gn.n_trades_net }} 笔金额不同，
+  最大差 {{ '{:,.0f}'.format(gn.max_notional_diff) }} 元。毛净差额 = <b>费用 + 路径差异</b>，不作纯费用归因。
+  {%- else %} —— 费用不改变成交序列，毛净差额即累计费用。{%- endif %}
+</p>
+{% endif %}
+
+<h2>净值与回撤</h2>
+<div id="navChart" class="chart" style="height:380px;"></div>
+<div class="chart-note">纵轴为货币金额（初始 {{ '{:,.0f}'.format(meta.initial_cash or 0) }} 元）；回撤为相对历史高点的跌幅（右轴，%）。</div>
+
+<h2>换手与成本（每次调仓）</h2>
+<div id="toChart" class="chart" style="height:270px;"></div>
+
+<h2>调仓明细（最近 20 笔）</h2>
+<div class="table-wrap">
+<table class="grid">
+  <tr><th>日期</th><th>方向</th><th>代码</th><th class="num">数量(股)</th><th class="num">成交价</th><th class="num">金额(元)</th><th class="num">费用(元)</th></tr>
+  {% for t in res.trades[-20:]|reverse %}
+  <tr><td class="mono">{{ t.date }}</td>
+      <td>{% if t.side == 'buy' %}<span class="pos">买入</span>{% else %}<span class="neg">卖出</span>{% endif %}</td>
+      <td class="mono">{{ t.code }}</td>
+      <td class="num">{{ '{:,.0f}'.format(t.shares) }}</td><td class="num">{{ '%.3f'|format(t.price) }}</td>
+      <td class="num">{{ '{:,.2f}'.format(t.amount) }}</td><td class="num">{{ '{:,.2f}'.format(t.cost) }}</td></tr>
+  {% endfor %}
+</table>
+</div>
+{% else %}
+<div class="empty">回测结果缺失。</div>
+{% endif %}
+
+<script>
+const res = {{ chart_json|tojson }};
+const NAV = (res.nav && res.nav.values) || [];
+const IDX = (res.nav && res.nav.index) || [];
+let peak = -Infinity;
+const DD = NAV.map(v => { if (v == null) return null; peak = Math.max(peak, v);
+                          return peak > 0 ? Math.round((v/peak - 1)*10000)/100 : null; });
+const wrap = (v) => (v==null || !isFinite(v)) ? null : Math.round(v*100)/100;
+const nav = echarts.init(document.getElementById('navChart'));
+const series = [{name:'策略(净)', type:'line', showSymbol:false, lineStyle:{width:2}, data:NAV.map(wrap)}];
+if (res.nav_gross) series.push({name:'策略(毛,零费)', type:'line', showSymbol:false,
+  lineStyle:{type:'dashed', width:1.4}, data:res.nav_gross.values.map(wrap)});
+if (res.benchmark) series.push({name:'沪深300', type:'line', showSymbol:false,
+  lineStyle:{width:1.4}, data:res.benchmark.values.map(wrap)});
+series.push({name:'回撤(%)', type:'line', showSymbol:false, yAxisIndex:1, areaStyle:{opacity:.12},
+  lineStyle:{width:1}, data:DD});
+nav.setOption({
+  tooltip:{trigger:'axis', axisPointer:{type:'cross'},
+           valueFormatter: v => v==null ? '—' : (Math.abs(v)<=5 ? (+v).toFixed(4) : (+v).toFixed(0))},
+  legend:{top:4}, grid:{left:78, right:64, top:44, bottom:56},
+  xAxis:{type:'category', data:IDX, boundaryGap:false},
+  yAxis:[{type:'value', scale:true, name:'净值(元)', nameTextStyle:{fontSize:11},
+          axisLabel:{formatter: v => (v/10000).toFixed(0)+'万'}},
+         {type:'value', name:'回撤 %', max:0, nameTextStyle:{fontSize:11}}],
+  dataZoom:[{type:'inside'},{type:'slider', height:16, bottom:8}],
+  series});
+window.__charts = [nav];
+if (res.turnover && res.turnover.index && res.turnover.index.length) {
+  const to = echarts.init(document.getElementById('toChart'));
+  window.__charts.push(to);
+  to.setOption({
+    tooltip:{trigger:'axis', axisPointer:{type:'shadow'}},
+    legend:{top:4}, grid:{left:64, right:74, top:44, bottom:44},
+    xAxis:{type:'category', data:res.turnover.index},
+    yAxis:[{type:'value', name:'单次换手', nameTextStyle:{fontSize:11},
+            axisLabel:{formatter: v => (v*100).toFixed(0)+'%'}},
+           {type:'value', name:'成本(元)', position:'right', nameTextStyle:{fontSize:11}}],
+    dataZoom:[{type:'inside'}],
+    series:[{name:'换手率', type:'bar', maxBarWidth:14,
+             data:res.turnover.values.map(v=>Math.round(v*10000)/10000)},
+            {name:'成本', type:'line', yAxisIndex:1, showSymbol:false,
+             data:(res.cost_series && res.cost_series.values || []).map(wrap)}]});
+}
+window.addEventListener('resize', ()=>window.__charts.forEach(c=>c && c.resize()));
+</script>
+{% endblock %}

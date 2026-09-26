@@ -1,0 +1,100 @@
+{# ===========================================================================
+   分层净值块（因子页与策略页共用，保证两边口径与外观完全一致）
+   需要上下文：diag（{h: {..., layer_nav}}）、ly_prefix（元素 id 前缀，页内唯一）
+   数据来自各自诊断里的 layer_nav 字段 —— 都是 factors/layers.py 的同一实现。
+   =========================================================================== #}
+<h2>分层净值</h2>
+<div class="toolbar" style="margin-bottom:10px;">
+  <label class="muted">持有期 h</label>
+  <select id="{{ ly_prefix }}hSel">
+    {% for h in diag.keys()|list|sort %}<option value="{{ h }}">h = {{ h }} 交易日</option>{% endfor %}
+  </select>
+  <span id="{{ ly_prefix }}note" class="muted" style="font-size:12.5px;"></span>
+</div>
+<div class="grid2" style="align-items:start; grid-template-columns:minmax(0,2fr) minmax(0,1fr);">
+  <div>
+    <div id="{{ ly_prefix }}Chart" class="chart" style="height:380px;"></div>
+    <div class="legend" id="{{ ly_prefix }}Legend" style="margin-top:8px;"></div>
+    <div class="chart-note" id="{{ ly_prefix }}Conv"></div>
+  </div>
+  <div>
+    <div class="table-wrap"><table class="grid" id="{{ ly_prefix }}Table"></table></div>
+    <div class="chart-note" id="{{ ly_prefix }}Spread"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const P = {{ ly_prefix|tojson }};
+  const D = DIAG;
+  const COLORS = ['#1a5fb4','#3d8bd4','#94a3b8','#e08a3c','#d92b2b','#8b1a1a',
+                  '#0a7b83','#5aa0e0','#b3261e','#7a5cc0'];
+  const sel = document.getElementById(P + 'hSel');
+  if (!sel) return;
+  const chart = echarts.init(document.getElementById(P + 'Chart'));
+  charts.push(chart);
+  function draw(){
+    const ln = ((D[sel.value] || {}).layer_nav) || {};
+    const note = document.getElementById(P + 'note');
+    const conv = document.getElementById(P + 'Conv');
+    const sp = document.getElementById(P + 'Spread');
+    const tb = document.getElementById(P + 'Table');
+    if (ln.error || !ln.layers){
+      chart.clear();
+      note.textContent = ln.error ? ('未产出：' + ln.error) : '该持有期没有分层净值';
+      tb.innerHTML = ''; sp.textContent = ''; conv.textContent = '';
+      return;
+    }
+    const K = ln.groups, series = [];
+    for (let k = 1; k <= K; k++){
+      const L = ln.layers[String(k)]; if (!L) continue;
+      const c = COLORS[(k-1) % COLORS.length];
+      series.push({name:'第'+k+'层', type:'line', showSymbol:false, connectNulls:false,
+        lineStyle:{width:(k===1||k===K)?2.4:1.4, color:c, opacity:(k===1||k===K)?1:.72},
+        itemStyle:{color:c}, data:L.nav});
+    }
+    chart.setOption({
+      tooltip:{trigger:'axis', valueFormatter:v=>v==null?'—':(+v).toFixed(4)},
+      legend:{top:4, textStyle:{fontSize:11.5}},
+      grid:{left:60, right:24, top:46, bottom:60},
+      xAxis:{type:'category', data:ln.index, boundaryGap:false},
+      yAxis:{type:'value', scale:true, name:'净值(首日=1)', nameTextStyle:{fontSize:11}},
+      dataZoom:[{type:'inside'},{type:'slider', height:16, bottom:8}],
+      series
+    }, true);
+    document.getElementById(P + 'Legend').innerHTML =
+      `<span class="li"><i style="background:${COLORS[0]}"></i>第1层 = 分数最低</span>`
+      + `<span class="li"><i style="background:${COLORS[(K-1)%COLORS.length]}"></i>第${K}层 = 分数最高</span>`;
+    conv.textContent = ln.convention || '';
+    note.textContent = ln.index.length + ' 个交易日';
+
+    let html = '<tr><th>层</th><th class="num">年化</th><th class="num">波动</th>'
+             + '<th class="num">Sharpe</th><th class="num">最大回撤</th><th class="num">持仓</th></tr>';
+    const anns = [];
+    for (let k = 1; k <= K; k++){
+      const L = ln.layers[String(k)]; if (!L) continue;
+      const c = COLORS[(k-1) % COLORS.length], ar = L.annualized_return;
+      anns.push(ar);
+      html += `<tr>
+        <td><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${c};margin-right:6px;"></span>
+          ${k===1?'1(最低)':(k===K?k+'(最高)':k)}</td>
+        <td class="num ${ar>0?'up':'down'}">${ar==null?'—':(ar*100).toFixed(2)+'%'}</td>
+        <td class="num">${L.annualized_vol==null?'—':(L.annualized_vol*100).toFixed(2)+'%'}</td>
+        <td class="num">${L.sharpe==null?'—':L.sharpe.toFixed(3)}</td>
+        <td class="num">${L.max_drawdown==null?'—':(L.max_drawdown*100).toFixed(2)+'%'}</td>
+        <td class="num">${L.avg_holdings==null?'—':L.avg_holdings.toFixed(0)}</td></tr>`;
+    }
+    tb.innerHTML = html;
+    const s2 = ln.long_short_spread || {};
+    if (s2.final_ratio != null){
+      let inc = anns.every(v => v != null);
+      for (let i = 1; i < anns.length && inc; i++) if (anns[i] < anns[i-1]) inc = false;
+      sp.innerHTML = `最高/最低层期末净值比 <b>${s2.final_ratio.toFixed(4)}</b>。`
+        + (inc ? '<b class="pos">年化单调递增</b>，方向与分数定义一致。'
+               : '<b class="neg">年化非单调</b>，不能据此判定有效或反向有效。');
+    } else { sp.textContent = ''; }
+  }
+  sel.addEventListener('change', draw);
+  draw();
+})();
+</script>

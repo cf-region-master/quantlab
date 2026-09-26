@@ -1,0 +1,84 @@
+﻿{% extends "base.html" %}
+{% block content %}
+<div class="crumb"><a href="/backtests">回测</a> / 新建回测</div>
+<h1>新建回测</h1>
+<p class="lead">区间必须落在信号有效区间内。</p>
+
+{% if not signals %}
+<div class="empty">还没有信号：先到<a href="/signals/new">策略</a>页建一个信号，再回来回测。</div>
+{% else %}
+<form class="panel" method="post" action="/backtests/new" id="btForm">
+  <div class="grid2">
+    <div><label>信号 *</label>
+      <select name="signal_id" id="sigSel" required>
+        {% for s in signals %}
+        <option value="{{ s.id }}" data-lo="{{ s.start_date[:10] }}" data-hi="{{ s.end_date[:10] }}"
+          {% if sig and sig.id == s.id %}selected{% endif %}>
+          #{{ s.id }} {{ s.name }}（{{ s.model_type }}，{{ s.start_date[:10] }}~{{ s.end_date[:10] }}）</option>
+        {% endfor %}
+      </select></div>
+    <div><label>股票池 *</label>
+      <select name="pool_id" required>
+        {% for p in pools %}<option value="{{ p.id }}" {% if (last.pool_id and last.pool_id == p.id) or (not last.pool_id and p.kind=='index' and p.indices|length==1 and p.indices[0]=='csi300') %}selected{% endif %}>{{ p.name }}{% if p.kind=='index' %}（PIT 动态）{% endif %}</option>{% endfor %}
+      </select></div>
+  </div>
+
+  <div class="grid2">
+    <div><label>回测区间 *（须在信号有效区间内）</label>
+      <div class="flex">
+        <input type="date" name="start_date" id="dStart" required style="flex:1">
+        <span class="muted">~</span>
+        <input type="date" name="end_date" id="dEnd" required style="flex:1">
+      </div>
+      <div class="form-hint" id="rangeHint"></div></div>
+    <div><label>调仓频率</label>
+      <select name="rebalance_freq">
+        <option value="weekly" {% if last.rebalance_freq == 'weekly' %}selected{% endif %}>weekly 周度</option>
+        <option value="monthly" {% if last.rebalance_freq == 'monthly' %}selected{% endif %}>monthly 月度</option>
+      </select></div>
+  </div>
+
+  <div class="grid3">
+    <div><label>持仓数 top_n</label><input type="number" name="top_n" value="{{ last.top_n or portfolio.top_n }}" min="1" max="50"></div>
+    <div><label>购买权重</label>
+      <select name="weighting">
+        <option value="equal_weight" {% if last.weighting == 'equal_weight' %}selected{% endif %}>equal_weight 等权</option>
+        <option value="signal_prop" {% if last.weighting == 'signal_prop' %}selected{% endif %}>signal_prop 按信号强度比例</option>
+        <option value="rank_prop" {% if last.weighting == 'rank_prop' %}selected{% endif %}>rank_prop 按名次线性</option>
+      </select></div>
+    <div><label>初始资金（元）</label><input type="number" name="initial_cash" value="{{ last.initial_cash or initial_cash }}" min="10000" step="10000"></div>
+  </div>
+
+  <div class="grid3">
+    <div><label>买入费率</label><input type="number" name="commission_buy" value="{{ last.get('commission_buy') if last.get('commission_buy') is not none else cost.commission_buy }}" step="0.0001" min="0"></div>
+    <div><label>卖出费率</label><input type="number" name="commission_sell" value="{{ last.get('commission_sell') if last.get('commission_sell') is not none else cost.commission_sell }}" step="0.0001" min="0"></div>
+    <div><label>滑点</label><input type="number" name="slippage" value="{{ last.get('slippage') if last.get('slippage') is not none else cost.slippage }}" step="0.0001" min="0"></div>
+  </div>
+  <div class="form-hint">默认费率来自 <code>configs/backtest.yaml</code>；<b>尚未分项建模印花税/过户费</b>。</div>
+  <div class="flex">
+    <button class="btn" type="submit">运行回测</button>
+    <a class="btn ghost" href="/backtests">取消</a>
+    <span class="muted" style="font-size:12.5px;">
+      {% if last.from_run_id %}已按上次回测 bt{{ last.from_run_id }} 的配置预填，可直接改{% else %}按配置默认值预填{% endif %}
+    </span>
+  </div>
+</form>
+{% endif %}
+
+<script>
+const sel = document.getElementById('sigSel');
+if (sel){
+  const dS = document.getElementById('dStart'), dE = document.getElementById('dEnd');
+  const hint = document.getElementById('rangeHint');
+  function sync(){
+    const o = sel.options[sel.selectedIndex];
+    const lo = o.dataset.lo, hi = o.dataset.hi;
+    dS.min = lo; dS.max = hi; dE.min = lo; dE.max = hi;
+    if (!dS.value || dS.value < lo) dS.value = lo;
+    if (!dE.value || dE.value > hi) dE.value = hi;
+    hint.textContent = '该信号有效区间：' + lo + ' ~ ' + hi;
+  }
+  sel.addEventListener('change', sync); sync();
+}
+</script>
+{% endblock %}

@@ -1,0 +1,17 @@
+# 统一换行符：仓库内一律 LF，检出时按平台转换。
+# 不加这个文件的话，Windows 上每次 add 都会刷一屏 "LF will be replaced by CRLF" 警告，
+# 而且不同平台提交同一份文件会产生整文件级的 diff 噪音。
+* text=auto eol=lf
+
+# 二进制：不要做任何换行/编码转换
+*.png  binary
+*.jpg  binary
+*.pdf  binary
+*.parquet binary
+*.npy  binary
+*.db   binary
+*.ico  binary
+
+# 这些是生成物，GitHub 语言统计里不该算进去
+quantlab/web/static/echarts.min.js  linguist-vendored
+data/reference/*.csv                linguist-generated

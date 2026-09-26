@@ -1,0 +1,31 @@
+# 对照实验（Project1：先写问题和预期，再只改变一个主要因素）
+# 顶层 question/expectation 为总纲；每个实验另写自己的 question/expectation（页面按实验展示）
+question: "调仓频率（周度 vs 月度）与因子选择，对扣费后净绩效分别有多大影响？"
+expectation: "周度调仓换手与成本显著高于月度，若因子衰减慢，月度扣费后净收益应更优；三因子中低波动预期更稳（回撤更小）。"
+keep_fixed: "同一数据快照、同一样本区间、同一费率与执行口径，仅改变被比较的一个因素"
+
+experiments:
+  - name: E1_rebalance_weekly_vs_monthly
+    description: "同一因子 mom20，仅改调仓频率 weekly→monthly"
+    question: "在信号完全相同（mom20）时，把调仓频率从周度降到月度，能否靠降低换手与成本改善扣费后净绩效？"
+    expectation: "月度换手应显著低于周度（约减半），累计成本同比例下降；若 mom20 信号衰减较慢，月度净收益应不低于周度。代价是单期暴露更集中，最大回撤可能更深。"
+    variants:
+      - name: weekly_base
+        override: {}                                     # 基准：backtest.yaml 原样
+      - name: monthly
+        override:
+          backtest: {rebalance: {freq: monthly}}
+
+  - name: E2_factor_comparison
+    description: "同一配置（周度），仅改信号因子 mom20→rev5 / lowvol20"
+    question: "在完全相同的调仓与成本口径下，三个因子的扣费后风险收益形态有何差异？"
+    expectation: "mom20 在高换手与高波动下收益最高但回撤最大；rev5 换手最高、成本侵蚀后剩余收益最少；lowvol20 收益温和但回撤最小、换手最低。"
+    variants:
+      - name: mom20
+        override: {}
+      - name: rev5
+        override:
+          backtest: {signal: {factor: rev5}}
+      - name: lowvol20
+        override:
+          backtest: {signal: {factor: lowvol20}}
