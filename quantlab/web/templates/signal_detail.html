@@ -26,7 +26,8 @@
 <div class="kv">
   <div class="k">持有期 h</div><div>{{ gain_report.horizon }} 交易日（RankIC 口径）</div>
   <div class="k">组合信号 RankIC</div>
-  <div><b class="{{ 'pos' if gain_report.combined_rank_ic and gain_report.combined_rank_ic > 0 else 'neg' }}">{{ '%.4f'|format(gain_report.combined_rank_ic) if gain_report.combined_rank_ic is not none else 'NaN' }}</b></div>
+  <div><b class="{{ 'pos' if gain_report.combined_rank_ic and gain_report.combined_rank_ic > 0 else 'neg' }}">{{ '%.4f'|format(gain_report.combined_rank_ic) if gain_report.combined_rank_ic is not none else 'NaN' }}</b>
+    {% if gain_report.combined_rank_ic_t_nw %}<span class="muted">· NW 修正 t = {{ '%.2f'|format(gain_report.combined_rank_ic_t_nw) }}</span>{% endif %}</div>
   {% for c in gain_report.components %}
   <div class="k">单因子 {{ c.name }}</div>
   <div>RankIC {{ '%.4f'|format(c.rank_ic) if c.rank_ic is not none else 'NaN' }}（h={{ c.horizon }}）</div>

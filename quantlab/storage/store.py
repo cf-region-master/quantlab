@@ -1253,8 +1253,17 @@ def combination_report(signal_id: int, horizon: int | None = None) -> dict:
     singles_named = {str(x["factor_id"]): x["rank_ic"] for x in singles.values()
                      if x["rank_ic"] is not None}
     gain = combination_gain(singles_named, combined)
+    # 组合 IC 的 NW 修正 t：从存储的逐日 IC 序列重算（lag=h-1，重叠标签纪律）
+    combined_t_nw = None
+    series = ((diag.get(str(h)) or {}).get("ic_series") or {}).get("rank_ic")
+    if series:
+        from ..factors.diagnostics import newey_west_tstat
+        combined_t_nw = newey_west_tstat(pd.Series(series, dtype="float64"),
+                                         lag=max(1, h - 1))
+        combined_t_nw = None if not np.isfinite(combined_t_nw) else round(combined_t_nw, 3)
     return {"signal_id": signal_id, "horizon": h,
             "combined_rank_ic": combined,
+            "combined_rank_ic_t_nw": combined_t_nw,
             "components": list(singles.values()),
             "correlation": corr_summary,
             "gain": gain}

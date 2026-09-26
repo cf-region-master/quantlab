@@ -193,6 +193,7 @@
     <div class="flex" style="margin-top:9px; font-size:12px; color:var(--muted);">
       <span>ICIR <b>{{ '%.3f'|format(sm.rank_ic.icir) if sm.rank_ic and sm.rank_ic.icir is not none else '—' }}</b></span>
       <span>t <b>{{ '%.2f'|format(sm.rank_ic.t_stat) if sm.rank_ic and sm.rank_ic.t_stat is not none else '—' }}</b></span>
+      <span title="Newey-West HAC 修正（lag=h-1），修正重叠标签导致的显著性虚高">t(NW) <b>{{ '%.2f'|format(sm.rank_ic.t_stat_nw) if sm.rank_ic and sm.rank_ic.t_stat_nw is not none else '—' }}</b></span>
       <span>覆盖 <b>{{ '%.0f%%'|format(sm.coverage_mean*100) if sm.coverage_mean is not none else '—' }}</b></span>
       <span>有效资产 <b>{{ '%.0f'|format(sm.n_valid_mean) if sm.n_valid_mean is not none else '—' }}</b></span>
     </div>
