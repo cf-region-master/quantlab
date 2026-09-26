@@ -56,7 +56,14 @@
   </div>
   <div class="form-hint">默认费率来自 <code>configs/backtest.yaml</code>；<b>尚未分项建模印花税/过户费</b>。</div>
   <div class="flex">
-    <button class="btn" type="submit">运行回测</button>
+      <div class="kv" style="margin:12px 0;">
+    <div class="k">行业中性（可选）</div>
+    <div><label style="display:flex; gap:8px; align-items:center;">
+      <input type="checkbox" name="industry_neutral" value="true" style="width:auto">
+      <span class="muted">启用后每行业最多 ceil(top_n/10) 只（申万 PIT 行业；无标签资产计入“未知”组同样受限）</span>
+    </label></div>
+  </div>
+<button class="btn" type="submit">运行回测</button>
     <a class="btn ghost" href="/backtests">取消</a>
     <span class="muted" style="font-size:12.5px;">
       {% if last.from_run_id %}已按上次回测 bt{{ last.from_run_id }} 的配置预填，可直接改{% else %}按配置默认值预填{% endif %}

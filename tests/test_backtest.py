@@ -172,3 +172,30 @@ def test_segment_split_partial_bounds_still_work():
     seg = segment_split(dates, purge=5,
                         bounds={"valid_start": "2024-01-01", "test_start": "2024-10-01"})
     assert len(seg["train"]) and len(seg["valid"]) and len(seg["test"])
+
+
+# ---------------- 行业中性（组合层分散化约束） ----------------
+def test_select_top_industry_cap():
+    """行业上限：单行业不得超 cap；无标签资产计入“未知”组同样受限。"""
+    from quantlab.backtest.engine import select_top
+    sig = pd.Series({"A": 5.0, "B": 4.0, "C": 3.0, "D": 2.0, "E": 1.0, "F": 0.5})
+    ind = pd.Series({"A": "银行", "B": "银行", "C": "银行", "D": "医药", "E": "医药"})
+    # cap=1：每行业最多 1 只 → 银行取 A，医药取 D，然后 B? 不行——B 银行超限 → E? 医药超限 → F(未知)
+    picked = select_top(sig, None, 4, industry_row=ind, max_per_industry=1)
+    # 三组（银行/医药/未知）各取 1 只 → top4 只有 3 只（组已耗尽，不足额不硬凑）
+    assert picked == ["A", "D", "F"]
+    # cap=2：银行 A、B，医药 D、E
+    picked2 = select_top(sig, None, 4, industry_row=ind, max_per_industry=2)
+    assert set(picked2[:4]) == {"A", "B", "D", "E"}
+    # F 无标签 → "未知"组同样受限
+    picked3 = select_top(sig, None, 6, industry_row=ind, max_per_industry=1)
+    assert picked3 == ["A", "D", "F"]
+
+
+def test_run_backtest_industry_neutral_flags(tiny_market, bt_cfg):
+    """启用行业中性后 config 留痕（max_per_industry），且检查仍全部通过。"""
+    bt_cfg["portfolio"]["max_per_industry"] = 1
+    sig = _signal_flat(tiny_market)
+    res = run_backtest(sig, tiny_market, bt_cfg, name="ind")
+    assert res.config["portfolio"]["max_per_industry"] == 1
+    assert res.config["portfolio"]["top_n"] == 2

@@ -465,10 +465,12 @@ def action_run_backtest(request: Request, signal_id: int = Form(...),
                         initial_cash: float = Form(1_000_000.0),
                         commission_buy: float = Form(...),
                         commission_sell: float = Form(...),
-                        slippage: float = Form(0.0)):
+                        slippage: float = Form(0.0),
+                        industry_neutral: str = Form("")):
     payload = dict(signal_id=signal_id, start_date=start_date, end_date=end_date,
                    pool_id=pool_id or None, top_n=top_n, weighting=weighting,
                    rebalance_freq=rebalance_freq, initial_cash=initial_cash,
+                   industry_neutral=bool(industry_neutral),
                    cost_override={"commission_buy": commission_buy,
                                   "commission_sell": commission_sell,
                                   "slippage": slippage})

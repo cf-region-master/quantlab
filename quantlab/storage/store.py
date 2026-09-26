@@ -1580,6 +1580,7 @@ def run_backtest_for_signal(*, signal_id: int, start_date, end_date,
                             rebalance_freq: str = "weekly",
                             initial_cash: float | None = None,
                             cost_override: dict | None = None,
+                            industry_neutral: bool = False,
                             name: str = "") -> dict:
     """对信号在指定配置下执行一次模拟成交，落库为 BacktestRun。"""
     from ..backtest.checks import finalize_checks, run_checks
@@ -1616,9 +1617,18 @@ def run_backtest_for_signal(*, signal_id: int, start_date, end_date,
     bt_cfg["cost"] = {**bt_cfg["cost"], **(cost_override or {})}
     bt_cfg["sample"] = {"start": str(start.date()), "end": str(end.date())}
 
-    net = run_backtest(panel, mk, bt_cfg, name=name or f"signal{signal_id}", pool_mask=pool_mask)
+    # 行业中性（可选）：申万 PIT 行业标签 + 单行业持仓上限 = ceil(top_n / 10)（文档化口径）
+    industry_labels = None
+    if industry_neutral:
+        from ..data.industry import industry_labels as _industry_labels
+        industry_labels = _industry_labels(mk.dates, mk.codes)
+        bt_cfg["portfolio"]["max_per_industry"] = max(1, int(np.ceil(int(top_n) / 10)))
+        bt_cfg["portfolio"]["industry_neutral"] = True
+
+    net = run_backtest(panel, mk, bt_cfg, name=name or f"signal{signal_id}", pool_mask=pool_mask,
+                       industry_labels=industry_labels)
     gross = run_backtest(panel, mk, bt_cfg, name=name or f"signal{signal_id}",
-                         disable_cost=True, pool_mask=pool_mask)
+                         disable_cost=True, pool_mask=pool_mask, industry_labels=industry_labels)
     net.nav_gross = gross.nav  # noqa: SLF001
     net.metrics = compute_metrics(net, float(cfg.data["risk_free_annual"]),
                                   int(cfg.data["trading_days_per_year"]))

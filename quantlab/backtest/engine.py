@@ -1,4 +1,4 @@
-﻿"""回测引擎（Project1 回测模块 · 组合执行版）。
+"""回测引擎（Project1 回测模块 · 组合执行版）。
 
 口径（全部在结果与报告中显式声明）：
   - 信号：t 日收盘的因子/信号值（预处理后，分数越高越优）
@@ -47,8 +47,15 @@ def formation_dates(index: pd.DatetimeIndex, freq: str, h: int | None = None) ->
     return [d for d in dates if pos[d] + 1 < len(idx)]
 
 
-def select_top(signal_row: pd.Series, pool_row: pd.Series | None, top_n: int) -> list[str]:
-    """目标持仓：股票池内按分数降序取 top_n，并列时按资产代码升序（确定性）。"""
+def select_top(signal_row: pd.Series, pool_row: pd.Series | None, top_n: int,
+               industry_row: pd.Series | None = None,
+               max_per_industry: int | None = None) -> list[str]:
+    """目标持仓：股票池内按分数降序取 top_n，并列时按资产代码升序（确定性）。
+
+    行业中性（可选）：industry_row 提供当日各资产的行业标签，max_per_industry
+    为单行业持仓上限 —— 贪心选取时超限跳过。无标签的资产归入 "未知" 组，
+    同样受限（不留后门）；行业数据缺失（industry_row=None）则退化为普通选股。
+    """
     s = signal_row.dropna()
     s = s[np.isfinite(s)]
     if pool_row is not None:
@@ -57,7 +64,20 @@ def select_top(signal_row: pd.Series, pool_row: pd.Series | None, top_n: int) ->
     if s.empty:
         return []
     order = sorted(s.index, key=lambda c: (-s[c], str(c)))
-    return order[:top_n]
+    if industry_row is None or not max_per_industry or max_per_industry <= 0:
+        return order[:top_n]
+    counts: dict[str, int] = {}
+    picked: list[str] = []
+    for c in order:
+        lab = industry_row.get(c)
+        g = str(lab) if (lab is not None and lab == lab and str(lab) != "") else "未知"
+        if counts.get(g, 0) >= max_per_industry:
+            continue
+        counts[g] = counts.get(g, 0) + 1
+        picked.append(c)
+        if len(picked) >= top_n:
+            break
+    return picked
 
 
 def target_weights(selected: list[str], scores: pd.Series, weighting: str,
@@ -141,7 +161,8 @@ class BacktestResult:
 
 
 def run_backtest(signal: pd.DataFrame, market, bt_cfg: dict, name: str = "bt",
-                 disable_cost: bool = False, pool_mask: pd.DataFrame | None = None
+                 disable_cost: bool = False, pool_mask: pd.DataFrame | None = None,
+                 industry_labels: pd.DataFrame | None = None
                  ) -> BacktestResult:
     """执行一次模拟成交。
 
@@ -161,6 +182,7 @@ def run_backtest(signal: pd.DataFrame, market, bt_cfg: dict, name: str = "bt",
 
     port = bt_cfg["portfolio"]
     top_n = int(port["top_n"])
+    max_per_industry = port.get("max_per_industry")
     weighting = str(port.get("weighting", "equal_weight"))
     exposure = float(port.get("target_exposure", 0.98))
     lot = int(port.get("lot_size", 100) or 0)
@@ -210,7 +232,13 @@ def run_backtest(signal: pd.DataFrame, market, bt_cfg: dict, name: str = "bt",
             pool_row = None
             if pool_mask is not None and t in pool_mask.index:
                 pool_row = pool_mask.loc[t]
-            selected = select_top(signal.loc[t], pool_row, top_n) if t in signal.index else []
+            ind_row = None
+            if industry_labels is not None and t in industry_labels.index:
+                ind_row = industry_labels.loc[t]
+            selected = (select_top(signal.loc[t], pool_row, top_n,
+                                   industry_row=ind_row,
+                                   max_per_industry=max_per_industry)
+                        if t in signal.index else [])
             w = target_weights(selected, signal.loc[t], weighting, exposure) if selected else {}
             rebalance_rows.append({"formation_date": str(t.date()),
                                    "exec_date": str(exec_day.date()),
