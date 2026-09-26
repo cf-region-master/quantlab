@@ -993,6 +993,27 @@ def page_experiments(request: Request):
     })
 
 
+@app.post("/experiments/{filename}/rerun")
+def action_experiment_rerun(filename: str):
+    """复跑一次对照实验：参数取自已存 JSON（同因子集/区间/h，数据取当前快照）。"""
+    from ..lab.comparison import compare_combinations
+    p_ = ROOT / "reports" / "combination_experiments" / f"{filename}.json"
+    if not p_.exists():
+        raise HTTPException(404)
+    old = json.loads(p_.read_text(encoding="utf-8"))
+    res = compare_combinations([int(i) for i in old["factor_ids"]],
+                               old["start"], old["end"],
+                               horizon=int(old["horizon"]),
+                               include_backtest=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    out_dir = ROOT / "reports" / "combination_experiments"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"cmp_{stamp}.json"
+    out.write_text(json.dumps(res, ensure_ascii=False, indent=2, default=str),
+                   encoding="utf-8")
+    return {"saved": out.name, "models": list(res.get("models", {}))}
+
+
 @app.get("/experiments/{filename}.csv")
 def experiments_csv(filename: str):
     """对照实验结果导出 CSV（filename 不含扩展名，防目录穿越）。"""
@@ -1062,7 +1083,7 @@ def page_runs(request: Request):
 
 
 @app.get("/api/signals/{signal_id}/latest.csv")
-def api_signal_latest_csv(signal_id: int):
+def api_signal_latest_csv(signal_id: int, date: str | None = None):
     """最新交易日信号截面导出 CSV（code,score）—— 策略落地直接可用。"""
     from fastapi.responses import PlainTextResponse
     sig_dict = store.get_signal(signal_id)
@@ -1076,6 +1097,12 @@ def api_signal_latest_csv(signal_id: int):
     panel = store.signal_panel(obj, store.market())
     if panel.empty:
         raise HTTPException(404, "信号面板为空")
+    if date:
+        target = pd.Timestamp(date)
+        exact = panel.index[panel.index.normalize() == target]
+        if len(exact) == 0:
+            raise HTTPException(404, f"{date} 不是有效交易日或不在信号区间内")
+        panel = panel.loc[exact]
     last = panel.iloc[-1].dropna().sort_values(ascending=False)
     lines = ["code,score,date"] + [
         f"{code},{score:.6f},{panel.index[-1].date()}" for code, score in last.items()]
@@ -1230,6 +1257,25 @@ def api_signal_combination_report(signal_id: int, horizon: int | None = None):
 def api_runs():
     """全部 run 的机器可读摘要（与 /runs 页面同源）。"""
     return store.list_run_summaries()
+
+
+@app.get("/api/runs/diff")
+def api_runs_diff(a: str, b: str):
+    """两个 run 的 manifest 差异（配置/环境/数据口径），供复现对照。"""
+    runs = ROOT / "reports" / "runs"
+    ma_p, mb_p = runs / a / "manifest.json", runs / b / "manifest.json"
+    if not ma_p.exists() or not mb_p.exists():
+        raise HTTPException(404, "run 不存在")
+    ma, mb = json.loads(ma_p.read_text(encoding="utf-8")), json.loads(mb_p.read_text(encoding="utf-8"))
+    def walk(prefix, x, y, out):
+        if isinstance(x, dict) and isinstance(y, dict):
+            for k in sorted(set(x) | set(y)):
+                walk(prefix + [str(k)], x.get(k), y.get(k), out)
+        elif x != y:
+            out.append({"path": ".".join(prefix), "a": x, "b": y})
+    diffs = []
+    walk([], ma, mb, diffs)
+    return {"a": a, "b": b, "n_diffs": len(diffs), "diffs": diffs[:80]}
 
 
 @app.get("/api/runs/latest")
