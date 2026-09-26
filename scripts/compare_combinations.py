@@ -30,12 +30,15 @@ def main() -> int:
     ap.add_argument("--horizon", type=int, default=5, help="标签持有期（交易日）")
     ap.add_argument("--models", default=None,
                     help="逗号分隔；默认全部轻量组合模型")
+    ap.add_argument("--backtest", action="store_true",
+                    help="每个模型追加一次真实模拟成交（周度 top10 等权）")
     args = ap.parse_args()
 
     factor_ids = [int(x) for x in args.factors.split(",") if x.strip()]
     models = [x for x in args.models.split(",") if x.strip()] if args.models else None
     res = compare_combinations(factor_ids, args.start, args.end,
-                               horizon=args.horizon, models=models)
+                               horizon=args.horizon, models=models,
+                               include_backtest=args.backtest)
 
     print(f"\n组合方式对照实验（因子 {res['factor_ids']} · h={args.horizon} · "
           f"{args.start} ~ {args.end}）")

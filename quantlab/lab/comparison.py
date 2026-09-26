@@ -25,8 +25,14 @@ DEFAULT_MODELS = ("equal_weight", "ic_weight", "ic_weight_rolling",
 
 def compare_combinations(factor_ids: list[int], start: str, end: str,
                          horizon: int = 5, models: list[str] | None = None,
-                         min_cross_section: int = 10) -> dict[str, Any]:
-    """返回 {model: {"rank_ic_mean","t_naive","t_nw","n_obs"}} 与实验元信息。"""
+                         min_cross_section: int = 10,
+                         include_backtest: bool = False) -> dict[str, Any]:
+    """返回 {model: {"rank_ic_mean","t_naive","t_nw","n_obs"}} 与实验元信息。
+
+    include_backtest=True 时对每个模型追加一次真实模拟成交（周度 top10 等权，
+    配置费率），输出年化/Sharpe/MDD/换手/成本 —— 把"组合方式更好"从 IC 层
+    验证到净值层。回测在内存执行，不落 BacktestRun（对照是实验，不是资产）。
+    """
     from ..factors.user_code import compute_user_factor  # noqa: F401 —— 确保 combine 路径可用
     from ..storage import store
     from ..storage.db import Factor
@@ -63,12 +69,19 @@ def compare_combinations(factor_ids: list[int], start: str, end: str,
                                     "quantile_groups": int(cfg.factors["diagnosis"]
                                                            .get("quantile_groups", 5))})
             summ = diag[str(horizon)]["ic_summary"]["rank_ic"]
-            out[m] = {"rank_ic_mean": round(summ["mean"], 6),
-                      "t_naive": round(summ["t_stat"], 3),
-                      "t_nw": round(summ["t_stat_nw"], 3)
-                      if summ.get("t_stat_nw") is not None
-                      and np.isfinite(summ["t_stat_nw"]) else None,
-                      "n_obs": summ["n_obs"]}
+            entry = {"rank_ic_mean": round(summ["mean"], 6),
+                     "t_naive": round(summ["t_stat"], 3),
+                     "t_nw": round(summ["t_stat_nw"], 3)
+                     if summ.get("t_stat_nw") is not None
+                     and np.isfinite(summ["t_stat_nw"]) else None,
+                     "n_obs": summ["n_obs"]}
+            if include_backtest:
+                try:
+                    bt = _quick_backtest(panel, mk, start, end)
+                    entry.update({f"bt_{k}": v for k, v in bt.items()})
+                except Exception as e:  # noqa: BLE001
+                    entry.update({"bt_error": f"{type(e).__name__}: {e}"})
+            out[m] = entry
         except Exception as e:  # noqa: BLE001 —— 单模型失败记录原因，不中断对照
             out[m] = {"error": f"{type(e).__name__}: {e}"}
 
@@ -80,3 +93,26 @@ def compare_combinations(factor_ids: list[int], start: str, end: str,
             "note": ("对照纪律：同因子集/同预处理/同区间/同标签，只改组合模型；"
                      "t_nw 为 Newey-West 修正 t（lag=h-1，重叠标签纪律）；"
                      "均为描述性统计")}
+
+
+def _quick_backtest(panel: pd.DataFrame, mk, start: str, end: str) -> dict[str, float]:
+    """内存版组合回测（周度 top10 等权，配置费率），返回关键净指标。"""
+    from ..backtest.engine import run_backtest
+    from ..config import load_config
+
+    cfg = load_config()
+    bt_cfg = dict(cfg.backtest)
+    bt_cfg["rebalance"] = {**bt_cfg["rebalance"], "freq": "weekly"}
+    bt_cfg["portfolio"] = {**bt_cfg["portfolio"], "top_n": 10, "weighting": "equal_weight"}
+    bt_cfg["sample"] = {"start": start, "end": end}
+    bt_cfg["trading_days_per_year"] = int(cfg.data["trading_days_per_year"])
+    res = run_backtest(panel, mk, bt_cfg, name="compare")
+    from ..backtest.metrics import compute_metrics
+    res.metrics = compute_metrics(res, float(cfg.data["risk_free_annual"]),
+                                  int(cfg.data["trading_days_per_year"]))
+    net = res.metrics.get("net", {}) if res.metrics else {}
+    return {"annualized_return": net.get("annualized_return"),
+            "sharpe": net.get("annualized_sharpe"),
+            "max_drawdown": net.get("max_drawdown"),
+            "total_cost": float(res.cost_series.sum()) if len(res.cost_series) else 0.0,
+            "turnover_sum": float(res.turnover.sum()) if len(res.turnover) else 0.0}
