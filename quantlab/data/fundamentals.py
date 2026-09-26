@@ -71,17 +71,24 @@ def _long() -> pd.DataFrame:
     return df
 
 
-def _wide(field: str, dates: pd.DatetimeIndex, codes: list[str]) -> pd.DataFrame:
+@lru_cache(maxsize=8)
+def _wide_cached(field: str) -> pd.DataFrame:
+    """按字段缓存整表 pivot（百万行长表 pivot 数秒级，中性化批量重算时被反复调用）。"""
     df = _long()
     if field not in df.columns:
         raise FileNotFoundError(f"daily_basic 中缺少字段 {field}")
     w = df.pivot_table(index="date", columns="code", values=field, aggfunc="last")
     w.columns.name = "code"
-    return w.reindex(index=dates, columns=codes)
+    return w
+
+
+def _wide(field: str, dates: pd.DatetimeIndex, codes: list[str]) -> pd.DataFrame:
+    return _wide_cached(field).reindex(index=dates, columns=codes)
 
 
 def clear_cache() -> None:
     _long.cache_clear()
+    _wide_cached.cache_clear()
 
 
 def total_mv_panel(dates: pd.DatetimeIndex, codes: list[str]) -> pd.DataFrame:

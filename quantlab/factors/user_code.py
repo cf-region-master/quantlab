@@ -13,8 +13,13 @@
     只放行 ALLOWED_MODULES，其余一律 ImportError。
     （对比：factor-quant-master 定义了同样的白名单但从未接线，
      真正生效的是 builtins.__import__，等于没有沙箱。）
+  - **AST 静态防护**（本层新增）：exec 前先解析语法树，静态拒绝
+    ① 双下划线属性链（`().__class__` / `f.__globals__` 等逃逸经典路径）；
+    ② 危险内建名（getattr/setattr/eval/exec/compile/open/globals/... 按名拦截，
+       即便未来有人把 __builtins__ 弄穿也拿不到入口）；
+    ③ 白名单之外的 import（与运行时 safe_import 双重保险）。
   - 本项目是**单用户本地工具、无鉴权**：能提交代码的人本就有机器权限，威胁模型与多用户平台不同。
-    因此这里的目标是"防误用 + 防意外"，不是抵御恶意代码。
+    因此这里的目标是"防误用 + 防意外"，不是抵御 determined attacker。
   - 尚未实现的是**超时/进程级隔离**（用户已确认后续再做）。当前因子代码在 Web 进程内执行，
     死循环会挂住请求 —— 这一点在提交页面上明确提示。
 """
@@ -71,6 +76,54 @@ class FactorCodeError(ValueError):
     """用户因子代码错误（可直接展示给用户）。"""
 
 
+# 静态按名拦截的危险内建（拿到任何一个都足以触达解释器内部）
+_DANGEROUS_NAMES = frozenset({
+    "eval", "exec", "compile", "open", "getattr", "setattr", "delattr",
+    "globals", "locals", "vars", "breakpoint", "input", "memoryview",
+    "__import__", "super", "type", "object", "help", "exit", "quit",
+})
+
+
+def ast_guard(src: str) -> None:
+    """exec 前的静态语法树检查：拒绝逃逸惯用路径（详见模块 docstring）。
+
+    只做「结构性拒绝 + 明确报错」，不做完整静态分析 —— 与受限 builtins
+    组成双层防护，且报错信息可直接展示给用户。
+    """
+    import ast as _ast
+
+    try:
+        tree = _ast.parse(src, "<user_factor>")
+    except SyntaxError as e:
+        raise FactorCodeError(f"代码语法错误：{e.msg}（第 {e.lineno} 行）") from e
+
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.Attribute):
+            attr = node.attr
+            if attr.startswith("__") and attr.endswith("__"):
+                raise FactorCodeError(
+                    f"沙箱禁止访问双下划线属性「.{attr}」（第 {node.lineno} 行）。"
+                    "因子计算不需要触碰对象内部协议。")
+        elif isinstance(node, _ast.Name):
+            if node.id in _DANGEROUS_NAMES:
+                raise FactorCodeError(
+                    f"沙箱禁止使用「{node.id}」（第 {node.lineno} 行）。"
+                    "因子计算只需要 fields 宽表 + 白名单内的 numpy/pandas。")
+        elif isinstance(node, _ast.Import):
+            for alias in node.names:
+                root = str(alias.name).split(".")[0]
+                if root not in ALLOWED_MODULES:
+                    raise FactorCodeError(
+                        f"沙箱禁止导入模块「{alias.name}」；可用: "
+                        f"{', '.join(sorted(ALLOWED_MODULES))}")
+        elif isinstance(node, _ast.ImportFrom):
+            root = str(node.module or "").split(".")[0]
+            if root and root not in ALLOWED_MODULES:
+                raise FactorCodeError(
+                    f"沙箱禁止导入模块「{node.module}」；可用: "
+                    f"{', '.join(sorted(ALLOWED_MODULES))}")
+
+
 def load_factor_function(code_str: str):
     """在受限环境里执行用户代码，返回其中定义的唯一函数对象。"""
     import inspect
@@ -80,6 +133,7 @@ def load_factor_function(code_str: str):
         raise FactorCodeError("代码为空")
     if "def factor" not in src:
         raise FactorCodeError("代码里必须定义一个名为 factor 的函数：def factor(fields): ...")
+    ast_guard(src)   # 静态防护先行：非法结构在执行前就被拒绝
 
     local_ns: dict = {}
     try:

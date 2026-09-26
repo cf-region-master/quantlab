@@ -185,3 +185,115 @@ def diagnostics_json(results: dict[str, Any]) -> dict[str, Any]:
                           "coverage": [float(v) for v in t["coverage"]]},
         }
     return out
+
+
+# ---------------- 分钟级大面板的向量化诊断（与上方口径一致，行为等价） ----------------
+def _vec_pearson(x: np.ndarray, y: np.ndarray, mask: np.ndarray, min_n: int) -> np.ndarray:
+    """逐行 NaN 感知 Pearson 相关（向量化）。常数序列 → NaN。"""
+    n = mask.sum(axis=1).astype("float64")
+    xm = np.where(mask, x, 0.0)
+    ym = np.where(mask, y, 0.0)
+    sx = xm.sum(axis=1)
+    sy = ym.sum(axis=1)
+    sxx = (xm * xm).sum(axis=1)
+    syy = (ym * ym).sum(axis=1)
+    sxy = (xm * ym).sum(axis=1)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        cov = sxy - sx * sy / n
+        vx = sxx - sx * sx / n
+        vy = syy - sy * sy / n
+        ic = cov / np.sqrt(vx * vy)
+    bad = (n < max(3, min_n)) | (vx <= 1e-12) | (vy <= 1e-12) | ~np.isfinite(ic)
+    ic[bad] = np.nan
+    return ic
+
+
+def ic_table_fast(factor: pd.DataFrame, y: pd.DataFrame, min_n: int) -> pd.DataFrame:
+    """大面板逐日 IC/RankIC/有效资产数/覆盖率（向量化，结果口径与 ic_table 一致）。"""
+    f = factor.to_numpy(dtype="float64")
+    v = y.to_numpy(dtype="float64")
+    mask = np.isfinite(f) & np.isfinite(v)
+    ic = _vec_pearson(f, v, mask, min_n)
+    # Spearman：平均秩变换后同样本秩上的 Pearson
+    fr = factor.rank(axis=1, method="average").to_numpy(dtype="float64")
+    yr = y.rank(axis=1, method="average").to_numpy(dtype="float64")
+    ric = _vec_pearson(fr, yr, mask, min_n)
+    n = mask.sum(axis=1)
+    with np.errstate(invalid="ignore"):
+        cov = n / factor.shape[1]
+    return pd.DataFrame({"ic": ic, "rank_ic": ric, "n_valid": n, "coverage": cov},
+                        index=factor.index)
+
+
+def quantile_table_fast(factor: pd.DataFrame, y: pd.DataFrame, k: int, min_n: int) -> dict:
+    """大面板 K 组分组（平均秩百分位落组，K 等宽）+ 组内等权收益与价差（向量化）。"""
+    farr = factor.to_numpy(dtype="float64")
+    yarr = y.to_numpy(dtype="float64")
+    fm = np.isfinite(farr)
+    # 平均秩百分位 → 组号 1..K（并列按平均秩落组，规则预先确定）
+    rpct = factor.rank(axis=1, method="average", pct=True).to_numpy(dtype="float64")
+    grp = np.ceil(rpct * k).astype("float64")
+    grp[(rpct <= 0) | ~fm] = np.nan
+    grp[grp > k] = k
+
+    rows_idx = []
+    g_ret = np.full((len(factor), k), np.nan)
+    n_formed = np.zeros((len(factor), k), dtype="int64")
+    n_valid = np.zeros((len(factor), k), dtype="int64")
+    for g in range(1, k + 1):
+        gm = (grp == g) & np.isfinite(yarr)
+        n_formed[:, g - 1] = ((grp == g) & fm).sum(axis=1)
+        n_valid[:, g - 1] = gm.sum(axis=1)
+        with np.errstate(invalid="ignore"):
+            s = np.where(gm, yarr, 0.0).sum(axis=1)
+            g_ret[:, g - 1] = np.where(n_valid[:, g - 1] > 0, s / np.maximum(n_valid[:, g - 1], 1), np.nan)
+    keep = n_formed.sum(axis=1) > 0
+    daily = pd.DataFrame(
+        {f"g{g}_n_formed": n_formed[keep, g - 1] for g in range(1, k + 1)}
+        | {f"g{g}_n_valid": n_valid[keep, g - 1] for g in range(1, k + 1)}
+        | {f"g{g}_ret": g_ret[keep, g - 1] for g in range(1, k + 1)},
+        index=factor.index[keep])
+    gm_mean = {g: float(daily[f"g{g}_ret"].mean()) for g in range(1, k + 1)}
+    spread = daily[f"g{k}_ret"] - daily["g1_ret"]
+    gvec = np.array([gm_mean[g] for g in range(1, k + 1)])
+    mono = float(sps.spearmanr(np.arange(1, k + 1), gvec).statistic) if np.isfinite(gvec).all() else np.nan
+    first = daily.iloc[0] if len(daily) else None
+    summary = {
+        "group_mean_return": {f"g{g}": (None if not np.isfinite(gm_mean[g]) else gm_mean[g])
+                              for g in range(1, k + 1)},
+        "spread_mean": float(spread.mean()) if len(spread) else np.nan,
+        "spread_annualized_note": "bar 均价差，未扣费，不等于可执行多空收益",
+        "monotonicity_spearman": mono,
+        "n_days": int(len(daily)),
+        "form_and_valid_example": {
+            "first_date_formed": {f"g{g}": {"n_formed": int(first[f"g{g}_n_formed"]),
+                                            "n_valid": int(first[f"g{g}_n_valid"])}
+                                  for g in range(1, k + 1)} if first is not None else {},
+        },
+        "tie_rule": "并列值按平均秩百分位等宽落组（预先确定）",
+    }
+    return {"daily": daily, "summary": summary}
+
+
+def run_diagnostics_fast(factor_values: pd.DataFrame, close_adj: pd.DataFrame,
+                         diag_cfg: dict) -> dict:
+    """分钟级大面板诊断入口：horizon 单位=bar。"""
+    min_n = int(diag_cfg.get("min_cross_section_samples", 10))
+    k = int(diag_cfg.get("quantile_groups", 5))
+    results = {}
+    for h in diag_cfg.get("horizon_days", [48]):
+        y = forward_return(close_adj, int(h))
+        table = ic_table_fast(factor_values, y, min_n)
+        qt = quantile_table_fast(factor_values, y, k, min_n)
+        results[str(h)] = {
+            "horizon": int(h),
+            "ic_table": table,
+            "ic_summary": ic_summary(table),
+            "quantile_summary": qt["summary"],
+            "quantile_daily": qt["daily"],
+        }
+        del y
+        import gc; gc.collect()
+    return results
+
+

@@ -110,3 +110,28 @@ def test_metrics_formulas(tiny_market, bt_cfg):
     assert m["annualized_vol"] == pytest.approx(np.sqrt(A) * ret.std(ddof=1), rel=1e-12)
     runmax = nav.cummax()
     assert m["max_drawdown"] == pytest.approx(float((1 - nav / runmax).max()), rel=1e-12)
+
+
+def test_stamp_duty_sell_only_and_gate(tiny_market, bt_cfg):
+    """印花税只对卖出单边计费：买入 cost=cb·B；卖出 cost=(cs+stamp)·S；检查门禁应 PASS。"""
+    bt_cfg["cost"]["stamp_duty_sell"] = 0.001  # 便于断言的测试税率
+    sig = _signal_flat(tiny_market)
+    res = run_backtest(sig, tiny_market, bt_cfg, name="stamp")
+    gross = run_backtest(sig, tiny_market, bt_cfg, name="stamp", disable_cost=True)
+    res.nav_gross = gross.nav
+    res.metrics = compute_metrics(res, 0.015, 243)
+    checks = run_checks(res, tiny_market, nav_gross=gross.nav)
+    assert checks["cost_ledger"]["pass"]
+    for t in res.trades:
+        if t["side"] == "buy":
+            assert t["stamp_duty"] == 0.0
+            assert t["cost"] == pytest.approx(bt_cfg["cost"]["commission_buy"] * t["amount"], rel=1e-12)
+        else:
+            assert t["stamp_duty"] == pytest.approx(0.001 * t["amount"], rel=1e-12)
+            assert t["cost"] == pytest.approx((bt_cfg["cost"]["commission_sell"] + 0.001) * t["amount"],
+                                              rel=1e-12)
+    # 净值分解：stamp_duty_total 只来自卖出
+    assert res.metrics["cost"]["stamp_duty_total"] == pytest.approx(
+        sum(t["stamp_duty"] for t in res.trades), rel=1e-9)
+    # 有印花税的最终净值 ≤ 无印花税版本
+    assert res.nav.iloc[-1] <= gross.nav.iloc[-1] + 1e-12

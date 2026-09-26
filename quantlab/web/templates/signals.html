@@ -19,9 +19,12 @@
 <div class="table-wrap" style="margin-top:14px;">
 <table class="grid">
   <tr><th>ID</th><th>名称</th><th>因子分量</th><th>模型</th><th>有效区间</th>
-      <th class="num">h=20 RankIC</th><th class="num">h=20 ICIR</th><th class="num">回测次数</th><th>创建时间</th></tr>
+      <th class="num">RankIC</th><th class="num">ICIR</th><th class="num">回测次数</th><th>创建时间</th></tr>
   {% for s in signals %}
-  {% set d = (s.diagnostics_json or {}).get('20', {}) %}
+  {% set dj = s.diagnostics_json or {} %}
+  {% set hs = dj.keys()|list|select("in", ["5","10","20","48","240"])|list %}
+  {% set hk = (hs|map("int")|max|string()) if hs else none %}
+  {% set d = dj.get(hk, {}) if hk else {} %}
   {% set summ = (d.ic_summary or {}) if d else {} %}
   <tr class="rowlink" onclick="location='/signals/{{ s.id }}'">
     <td>{{ s.id }}</td>

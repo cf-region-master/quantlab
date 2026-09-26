@@ -73,6 +73,10 @@ def compute_metrics(result, rf_annual: float, A: int) -> dict[str, Any]:
             "total_cost_pct_of_avg_nav": total_cost / float(result.nav.mean()),
             "commission_buy": result.config["cost"]["commission_buy"],
             "commission_sell": result.config["cost"]["commission_sell"],
+            "stamp_duty_sell": float(result.config["cost"].get("stamp_duty_sell", 0.0)),
+            # 成本分项合计（从逐笔账本汇总；毛跑时全为 0）
+            "commission_total": float(sum(t.get("commission", t["cost"]) for t in result.trades)),
+            "stamp_duty_total": float(sum(t.get("stamp_duty", 0.0) for t in result.trades)),
             "slippage": result.config["cost"].get("slippage", 0.0),
         },
         "turnover": {

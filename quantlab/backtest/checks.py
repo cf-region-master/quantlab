@@ -38,6 +38,7 @@ def run_checks(result, market, nav_gross: pd.Series | None = None,
     gross_run = bool((result.config or {}).get("_disable_cost"))
     cb = 0.0 if gross_run else float(cfg_cost.get("commission_buy", 0.0))
     cs = 0.0 if gross_run else float(cfg_cost.get("commission_sell", 0.0))
+    stamp = 0.0 if gross_run else float(cfg_cost.get("stamp_duty_sell", 0.0))
 
     # 1) 收益与净值一致：用对外发布的 daily_return 反推净值
     nav = result.nav
@@ -75,7 +76,8 @@ def run_checks(result, market, nav_gross: pd.Series | None = None,
     fee_bad, exec_bad = [], []
     open_px, vol = market.open_adj, market.volume
     for t in result.trades:
-        expect = (cb if t["side"] == "buy" else cs) * float(t["amount"])
+        # 卖出含印花税（单边）：cost = (cs + stamp)·S；买入 cost = cb·B
+        expect = ((cb if t["side"] == "buy" else cs + stamp) * float(t["amount"]))
         # 金额为货币单位（可达 1e5~1e6），必须用【相对】容差
         if abs(float(t["cost"]) - expect) > 1e-9 * max(1.0, abs(float(t["amount"]))):
             fee_bad.append({"date": t["date"], "code": t["code"], "side": t["side"],
@@ -96,7 +98,7 @@ def run_checks(result, market, nav_gross: pd.Series | None = None,
         "abs_diff": abs(ledger_sum - trade_sum), "rel_tolerance": 1e-9,
         "n_fee_mismatch": len(fee_bad), "fee_mismatch_examples": fee_bad[:5],
         "n_invalid_execution": len(exec_bad), "invalid_execution_examples": exec_bad[:5],
-        "note": "每笔费用按配置费率 cb/cs 重算后比对（相对容差）；未成交不扣费；毛跑时费率为 0",
+        "note": "每笔费用按配置费率 cb/cs+卖出印花税重算后比对（相对容差）；未成交不扣费；毛跑时费率为 0",
     }
 
     # 4) 权重与现金守恒：invested + cash = nav
@@ -121,7 +123,8 @@ def run_checks(result, market, nav_gross: pd.Series | None = None,
         "note": "下单预算须为手续费预留额度，不得使现金为负",
     }
 
-    # 6) 无前视：成交日 = 形成日的次一交易日；且成交构成须与【独立重算】的目标一致    fdates = set(result.formation_dates)
+    # 6) 无前视：成交日 = 形成日的次一交易日；且成交构成须与【独立重算】的目标一致
+    #    （目标集合由信号面板在 market 日历上独立重算，与引擎内部实现互为对照）
     dates = list(market.dates)
     pos = {d: i for i, d in enumerate(dates)}
     bad_schedule, bad_composition, negative_position = [], [], []

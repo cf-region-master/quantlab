@@ -31,6 +31,25 @@ _running_engines: dict[str, Any] = {}
 _market: MarketData | None = None
 
 
+def reset_caches() -> dict:
+    """清空进程内数据缓存（market 单例/股票池掩码/基本面面板）。
+
+    使用场景：服务运行期间重跑了 pipeline/清洗/抓取后，页面数据仍来自旧面板 ——
+    调用本函数后下一次请求重新加载。不影响 DB 与因子值 parquet（那两处本来
+    就是每次查询现读的）。
+    """
+    global _market, _close_5m
+    _market = None
+    _close_5m = None
+    _pool_cache.clear()
+    try:
+        from ..data import fundamentals
+        fundamentals.clear_cache()
+    except Exception:  # noqa: BLE001 —— fundamentals 可用性不影响其余缓存清理
+        pass
+    return {"status": "cache_reset"}
+
+
 def market() -> MarketData:
     global _market
     if _market is None:
@@ -60,6 +79,8 @@ def list_run_summaries() -> list[dict]:
     if not base.exists():
         return []
     out: list[dict] = []
+    # 注：glob 与后续 stat/read 之间文件可能被清理（流水线重跑），
+    # 每个 run 的解析都吞掉 OSError/JSON 错误，保证页面不 500。
 
     def _json(p: Path, default):
         try:
@@ -121,6 +142,31 @@ def _save_values(factor_id: int, values: pd.DataFrame) -> str:
     p = VALUES_DIR / f"{factor_id}.parquet"
     values.to_parquet(p)
     return str(p)
+
+
+def _write_values_tmp(factor_id: int, values: pd.DataFrame) -> Path:
+    """写临时文件（不触碰正式路径），由 _promote_values_tmp 在 DB 提交成功后原子替换。
+
+    修复历史 bug：refresh_factor 曾先覆盖正式 parquet 再算诊断/提交，
+    中途异常会留下「新值文件 + 旧元数据」，且旧值已不可恢复。
+    """
+    VALUES_DIR.mkdir(parents=True, exist_ok=True)
+    p = VALUES_DIR / f"{factor_id}.parquet.tmp"
+    values.to_parquet(p)
+    return p
+
+
+def _promote_values_tmp(tmp: Path, final: str | Path) -> None:
+    """DB 提交成功后调用：原子替换正式文件（同盘 rename）。失败时临时文件残留不影响旧数据。"""
+    if tmp is None:
+        return
+    final = Path(final)
+    final.parent.mkdir(parents=True, exist_ok=True)
+    tmp.replace(final)
+
+
+def _values_path_of(factor_id: int) -> str:
+    return str(VALUES_DIR / f"{factor_id}.parquet")
 
 
 def register_factor(*, name: str, hash_code: str, source: str, expression: str,
@@ -347,6 +393,7 @@ def delete_factors(factor_ids: list[int], *, force: bool = False) -> dict:
     """
     s = get_session()
     deleted, blocked, cascaded = [], [], []
+    stale_paths: list[str | None] = []
     try:
         for fid in factor_ids:
             fid = int(fid)
@@ -372,12 +419,14 @@ def delete_factors(factor_ids: list[int], *, force: bool = False) -> dict:
             for c in s.query(AlgoCandidate).filter_by(factor_id=fid).all():
                 c.adopted, c.factor_id = False, None   # 候选回到"未采纳"，可再次采纳
             p, name = f.values_path, f.name
+            stale_paths.append(p)
             s.delete(f)
-            s.flush()
-            if p:
-                Path(p).unlink(missing_ok=True)
             deleted.append({"id": fid, "name": name, "cascaded_signals": cascaded_here})
         s.commit()
+        # 提交成功后才删值文件：失败回滚时 DB 行与文件保持一致
+        for p in stale_paths:
+            if p:
+                Path(p).unlink(missing_ok=True)
     finally:
         s.close()
     return {"n_requested": len(factor_ids), "n_deleted": len(deleted),
@@ -1069,6 +1118,36 @@ def signal_panel(sig: Signal, market, start=None, end=None) -> pd.DataFrame:
     raise ValueError(f"未知模型类型: {sig.model_type}")
 
 
+def _signal_pool_mask(sig, market):
+    """信号的分层诊断域 = 各分量因子所属股票池的交集（逐日 AND）。
+
+    Signal 本身不带池（池在回测时按次选择），但分量因子的截面口径是在各自池内
+    定义的，因此信号的"定义域"是它们共同的支撑集。全部分量不限池时返回 (None, note)。
+    """
+    masks = []
+    notes = []
+    s = get_session()
+    try:
+        for c in (sig.components or []):
+            f = s.get(Factor, int(c.get("factor_id", -1)))
+            if f is None:
+                continue
+            m, note = pool_mask_for(f.pool_id, market)
+            if m is not None:
+                masks.append(m)
+                notes.append(f"{f.name}:{note}")
+    finally:
+        s.close()
+    if not masks:
+        return None, "分量因子均不限池"
+    aligned = [m.reindex(index=market.dates, columns=market.codes).fillna(False)
+               for m in masks]
+    out = aligned[0]
+    for m in aligned[1:]:
+        out = out & m
+    return out, "分量池交集（" + " ∩ ".join(notes) + "）"
+
+
 def required_history(sig: Signal) -> dict:
     """该信号所需的历史长度（用于"数据够不够"的显式校验）。
 
@@ -1114,7 +1193,7 @@ def check_data_sufficiency(sig: Signal) -> dict:
                 problems.append(
                     f"因子「{f.name}」最晚只到 {pd.Timestamp(ve).date()}，"
                     f"覆盖不到策略区间终点 {end.date()}")
-            if not problems:
+            if all(f"「{f.name}」" not in x for x in problems):
                 ok.append(f.name)
     finally:
         s.close()
@@ -1189,13 +1268,13 @@ def diagnose_signal(signal_id: int, horizons: list[int] | None = None) -> dict:
         groups = int(sig.preprocess_spec.get("quantile", 5))
     finally:
         s.close()
-    if model_type in ("linear", "tree"):
-        # 模型类信号的样本外预测面板由 fit_walk_forward 生成，诊断口径相同
-        pass
     s = get_session()
     try:
         sig = s.get(Signal, signal_id)
         panel = signal_panel(sig, market())
+        # 分层净值在【信号定义域】上计算：分量因子各自股票池的交集
+        # （历史 bug：这里传 pool_mask=None，池约束信号的分层统计跑在全样本上，与因子口径不一致）
+        pool_mask, _ = _signal_pool_mask(sig, market())
     finally:
         s.close()
 
@@ -1215,7 +1294,7 @@ def diagnose_signal(signal_id: int, horizons: list[int] | None = None) -> dict:
         key = str(h)
         try:
             payload[key]["layer_nav"] = layered_nav(
-                panel, mk, groups=groups, h=int(h), pool_mask=None,
+                panel, mk, groups=groups, h=int(h), pool_mask=pool_mask,
                 commission_buy=float(cost.get("commission_buy", 0.0)),
                 commission_sell=float(cost.get("commission_sell", 0.0)),
                 trading_days=A, rf_annual=rf)
@@ -1438,7 +1517,8 @@ def refresh_factor(factor_id: int, pool_id: int | None = None,
         f.pool_id = target_pool
         _, note = pool_mask_for(target_pool, market())
         f.universe_note = note
-        f.values_path = _save_values(f.id, values)
+        # 原子性：先写临时文件，DB 提交成功后再原子替换 —— 中途失败时旧值文件不被破坏
+        tmp_path = _write_values_tmp(f.id, values)
         s.flush()
         _compute_and_store_metrics(f, values, s)
         if f.pool_id != old_pool:
@@ -1446,6 +1526,7 @@ def refresh_factor(factor_id: int, pool_id: int | None = None,
         if spec is not None and normalize_spec(spec) != before_spec:
             f.notes = (f.notes or "") + " | 预处理/评估参数已修改"
         s.commit()
+        _promote_values_tmp(tmp_path, f.values_path or _values_path_of(f.id))
         after_range = [str(f.value_start.date()), str(f.value_end.date())]
         after_spec = f.preprocess_spec
         name = f.name
@@ -1750,7 +1831,7 @@ def create_task(engine_id: str, params: dict) -> str:
         return create_gp_task(params)
     if engine_id == "alphagen_daily_cpu":
         return create_alphagen_task(params)
-    raise ValueError(f"引擎 {engine_id} 当前不可用（AlphaGen 需 GPU 的版本未接入本机）")
+    raise ValueError(f"引擎 {engine_id} 当前不可用（未知引擎（本机可用：gp_daily / alphagen_daily_cpu））")
 
 
 # ---------------- 算法实验室 ----------------

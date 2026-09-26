@@ -1,7 +1,8 @@
-"""QuantLab Web 平台（课程复现版）：因子库 / 策略库 / 算法实验室 / 复现包。
+"""QuantLab Web 平台：因子库 / 信号（策略）/ 回测 / 股票池 / 算法实验室。
 
-长任务交互：挖掘任务创建后返回 202 + task_id，前端轮询 /api/lab/tasks/{id}；
-策略回测秒级完成，采用同步创建。API 与页面共用同一服务层（store）。
+长任务交互：挖掘任务与批量任务创建后返回 202 + id，前端轮询 /api/lab/tasks/{id}
+与 /api/jobs/{id}；策略回测为同步编排。API 与页面共用同一服务层（store）。
+复现信息（旧 /repro 页）由 reports/runs/<id>/manifest.json 与 /api/runs 提供。
 """
 from __future__ import annotations
 
@@ -12,6 +13,8 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from contextlib import asynccontextmanager
+
 from fastapi import BackgroundTasks, Body, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -26,14 +29,19 @@ from ..storage import store
 from ..storage.db import (AlgoCandidate, AlgoTask, BacktestRun, Factor, FactorMetric, Signal,
                           StockPool, get_session, init_db)
 
-app = FastAPI(title="QuantLab 量化因子挖掘平台（Project1）")
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    _startup()
+    yield
+
+
+app = FastAPI(title="QuantLab 量化因子挖掘平台（Project1）", lifespan=_lifespan)
 templates = Jinja2Templates(directory=str(ROOT / "quantlab" / "web" / "templates"))
 # 参数值的短中文标签（参数总表「当前值」列用）
 templates.env.globals["short_label"] = short_label
 app.mount("/static", StaticFiles(directory=str(ROOT / "quantlab" / "web" / "static")), name="static")
 
 
-@app.on_event("startup")
 def _startup() -> None:
     init_db()
     # 内置股票池必须在启动时补齐：缺了它，因子页/回测页的「股票池」下拉是空的，
@@ -261,7 +269,13 @@ def page_signal_new(request: Request, factors: str = ""):
     s = get_session()
     try:
         facs = s.query(Factor).all()
-        mets = {m.factor_id: m for m in s.query(FactorMetric).filter_by(horizon=20).all()}
+        # 不再硬编码 horizon=20（AlphaGen 因子常只有 h=5）：每个因子取其实际存在
+        # 的最大 horizon 诊断，展示时随附期数
+        mets = {}
+        for m in s.query(FactorMetric).all():
+            cur = mets.get(m.factor_id)
+            if cur is None or m.horizon > cur.horizon:
+                mets[m.factor_id] = m
     finally:
         s.close()
     mk = store.market()
@@ -738,17 +752,6 @@ def api_pool_heat(pool_id: int, date: str | None = None, top: int = 12):
                                     key=lambda x: -x["n"])}
 
 
-class GpTaskCreate(BaseModel):
-    population_size: int = Field(60, ge=10, le=500)
-    generations: int = Field(15, ge=1, le=200)
-    tournament_k: int = Field(4, ge=2, le=20)
-    p_crossover: float = Field(0.7, ge=0.0, le=1.0)
-    p_mutate: float = Field(0.25, ge=0.0, le=1.0)
-    elitism: int = Field(2, ge=1, le=10)
-    horizon: int = Field(5, ge=1, le=60)
-    seed: int = Field(7, ge=0, le=999999)
-
-
 @app.post("/lab/tasks", status_code=202)
 def action_create_task(payload: dict = Body(...)):
     """统一入口：按 engine_id 分发（gp_daily / alphagen_daily_cpu）。"""
@@ -791,6 +794,13 @@ def action_adopt(payload: AdoptRequest):
                                  hidden=False, spec=spec,
                                  pool_id=pool_id, start=st, end=en)
     return JSONResponse({"adopted": out})
+
+
+# ---------------- 运维 ----------------
+@app.post("/api/admin/cache/reset")
+def api_cache_reset():
+    """重跑流水线/清洗后调用：让 Web 进程重新加载行情面板与股票池掩码。"""
+    return store.reset_caches()
 
 
 # ---------------- JSON API ----------------

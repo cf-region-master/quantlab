@@ -1,9 +1,17 @@
 # 研究范围与数据口径（Project1 数据模块）
+#
+# 本仓库支持两种数据模式，清洗层只关心 data/raw/stocks/*.csv 的格式，两种模式产物一致：
+#   1) 快照模式（本文件当前值）：scripts/fetch_data.py（akshare/sina）抽样的 50 只，
+#      用于小样本快速复现；**成分名单为当期快照，非 point-in-time**。
+#   2) PIT 模式（README §1 主推）：scripts/fetch_data_tushare.py 抓 HS300/ZZ500/ZZ1000
+#      期内的 PIT 成分并集（约 2800 只，2020 起）——此时请在 overrides 或本文件把
+#      universe.name 改为 tushare_pit，并按实际抓取区间改 period。
+# 改这里不会自动改数据：请重跑 scripts/run_pipeline.py（清洗缓存按区间/哈希自动失效）。
 universe:
   name: csi300_sample50
-  rule: "沪深300当期成分，按代码升序步长抽样50只（确定性，可复现）"
+  rule: "快照模式：沪深300当期成分，按代码升序步长抽样50只（确定性，可复现）"
   size: 50
-  pit_limitation: "成分名单为当期快照，未做 point-in-time 处理（未建模限制，见研究报告局限章节）"
+  pit_limitation: "快照模式成分名单为当期快照，未做 point-in-time；PIT 模式用 data/reference/universe_intervals.csv 逐日判定"
 
 period:
   start: "2022-01-04"

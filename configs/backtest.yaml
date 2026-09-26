@@ -23,9 +23,11 @@ portfolio:
   lot_size: 100             # A 股整手（买入向下取整）；0 = 不建模整手约束
 
 cost:
-  commission_buy: 0.0015    # c_b：按实际买入成交金额
-  commission_sell: 0.0015   # c_s：按实际卖出成交金额
-  slippage: 0.0             # 可选：买卖价冲击比例
+  commission_buy: 0.0015     # c_b：按实际买入成交金额（佣金）
+  commission_sell: 0.0015    # c_s：按实际卖出成交金额（佣金）
+  stamp_duty_sell: 0.0005    # 印花税：卖出单边。A股 2023-08-28 起 0.05%（此前 0.1%）；
+                             # 时间变动未建模，跨 2023-08 的回测此为近似口径（见 README 局限）
+  slippage: 0.0              # 可选：买卖价冲击比例
 
 execution:
   price: open_adj           # t日收盘算信号，t+1日开盘价成交（避免前视）

@@ -122,16 +122,16 @@ def build_clean(raw_dir: Path, clean_dir: Path, period: dict[str, str]) -> dict[
             warnings.append(f"{code}: 样本期内无可用的复权因子，已剔除")
             continue
         a_tau = fac_in.dropna().iloc[0]
+        # 仅用于 per_stock 的「因子公告覆盖缺口」统计（missing_close_adj）；
+        # 正式的加载派生见 MarketData.price（用 ffill 后的因子面板）
         adj = raw_in_window[["open", "high", "low", "close"]].mul(fac_in / a_tau, axis=0)
         adj.columns = [f"{c}_adj" for c in adj.columns]
 
         panels["volume"][code] = raw_in_window["volume"]
         panels["amount"][code] = raw_in_window["amount"]
         for c in PRICE_FIELDS:
-            # 原始价：落盘（唯一价格来源）
+            # 原始价：唯一落盘的价格来源（调整价在加载时按口径派生）
             panels.setdefault(f"{c}_raw", {})[code] = raw_in_window[c]
-            # 调整价：**只在内存里**用于质检统计（缺失格数/覆盖率），不落盘
-            panels.setdefault(c, {})[code] = adj[f"{c}_adj"]
         factor_panels[code] = fac_in
 
         span = raw_in_window.dropna(subset=["close"]).index
@@ -161,26 +161,30 @@ def build_clean(raw_dir: Path, clean_dir: Path, period: dict[str, str]) -> dict[
     # 注意：必须用【原始】收盘价判定停牌。原实现误用复权价 close_adj，
     # 使得复权因子覆盖不到的日期（原始价其实存在）被误判为停牌。
     first_valid = {}
-    for code in wide["close"].columns:
+    for code in wide["close_raw"].columns:
         s = wide["close_raw"][code].dropna()
         first_valid[code] = s.index.min() if len(s) else pd.NaT
-    pre_listed = pd.DataFrame({c: wide["close"].index < fv for c, fv in first_valid.items()},
-                              index=wide["close"].index)
+    pre_listed = pd.DataFrame({c: wide["close_raw"].index < fv for c, fv in first_valid.items()},
+                              index=wide["close_raw"].index)
     listed = ~pre_listed
     suspended = listed & (wide["volume"].isna() | (wide["volume"] <= 0)
                           | wide["close_raw"].isna())
 
     agg = {
         "n_assets_requested": len(codes),
-        "n_assets_cleaned": wide["close"].shape[1],
-        "n_trading_days": int(wide["close"].shape[0]),
-        "date_range": [str(wide["close"].index.min().date()), str(wide["close"].index.max().date())],
+        "n_assets_cleaned": wide["close_raw"].shape[1],
+        "n_trading_days": int(wide["close_raw"].shape[0]),
+        "date_range": [str(wide["close_raw"].index.min().date()), str(wide["close_raw"].index.max().date())],
         "rows_raw_total": int(sum(q["rows_raw"] for q in per_stock_quality.values())),
         "rows_in_window_total": int(sum(q["rows_in_window"] for q in per_stock_quality.values())),
         "duplicate_dates_dropped_total": int(sum(q["duplicate_dates_dropped"] for q in per_stock_quality.values())),
         "illegal_total": {k: int(sum(q["illegal_counts"][k] for q in per_stock_quality.values()))
                           for k in next(iter(per_stock_quality.values()))["illegal_counts"]},
-        "missing_close_adj_cells": int(wide["close"].isna().sum().sum()),
+        # 口径=加载派生语义：raw 缺失 或 【ffill 后的】复权因子缺失。
+        # 历史 bug：这里曾用"未 ffill 的段内因子"在内存里拼调整价统计（1883），
+        # 而用户实际加载到的派生面板只有 601 格缺失 —— 报告与数据不符。
+        "missing_close_adj_cells": int(
+            (wide["close_raw"].isna() | adj_factor_wide.isna()).sum().sum()),
         "pre_listed_cells": int(pre_listed.sum().sum()),
         "suspended_cells_listed": int(suspended.sum().sum()),
         "suspended_cell_ratio_listed": round(float(suspended[listed.columns].stack().mean()), 6),

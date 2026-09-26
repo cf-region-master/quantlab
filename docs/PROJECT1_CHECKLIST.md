@@ -22,7 +22,7 @@
 | 行情与单位：开/收/量，注明频率与单位 | `configs/data.yaml` units（价格=元、量=股、额=元、换手=比例）；sina 口径在 manifest.units | 报告附录A 数据字典 |
 | 价格口径：原始价与复权信息；**乘法累计因子约定** | 原始价与 adj_factor 分别保存；`P_adj=P_raw×a(t)/a(τ)`，τ=样本首日；因子阶梯前填充（沿用公告值） | `clean.py`；`tests/test_data_clean.py::test_adjustment_formula` |
 | 资产范围：名单、筛选条件、覆盖区间与样本数量 | constituents.csv + 抽样规则（代码升序步长，确定性）+ 每股票 first/last date、覆盖率 | quality_report.per_stock |
-| **质量报告**：重复键/日期顺序/缺失值/非法价格成交量/覆盖率/清洗前后数量 | `quality_report.json`：`duplicate_dates_dropped_total`、`raw_monotonic`、`missing_close_*`、`illegal_total`（4 类规则）、`coverage_mean/min`、`rows_raw_total→rows_in_window_total`；未上市 523 格与上市后停牌 1360 格分开统计 | `tests/test_repro.py::test_clean_quality_report_fields`；Web `/repro` 页 |
+| **质量报告**：重复键/日期顺序/缺失值/非法价格成交量/覆盖率/清洗前后数量 | `quality_report.json`：`duplicate_dates_dropped_total`、`raw_monotonic`、`missing_close_*`、`illegal_total`（4 类规则）、`coverage_mean/min`、`rows_raw_total→rows_in_window_total`；未上市 523 格与上市后停牌 1360 格分开统计 | `tests/test_repro.py::test_clean_quality_report_fields`；报告复现信息（manifest/API） |
 | 异常处理说明原因；**缺失值不统一填零** | policy 声明 + 实现：非法置 NaN 计数不删行；下游显式跳过；估值用最后有效价并记事件 | `clean.py._check_illegal`；`tests/test_data_clean.py` |
 
 ## 三、因子模块（P8–P9 页）
@@ -95,8 +95,8 @@
 
 ## 九、验证状态汇总（截至 2026-09-25）
 
-- pytest：**20/20 PASS**
+- pytest：**53 项全部通过**（含 skip 守卫的环境测试）
 - 端到端流水线 run v1：回测基本检查**全部 PASS**，9.3s
 - 可复现：两次独立运行全部结果文件 **sha256 一致**
-- Web 平台：7 个页面 + API 全部 200；GP 任务 202→SUCCESS→7 候选→采纳 3 条→因子库 `source=gp`；2 个策略创建并回测通过
+- Web 平台：页面 + API 全部 200；GP 任务 202→SUCCESS→7 候选→采纳 3 条→因子库 `source=gp`；2 个策略创建并回测通过
 - 研究报告：md + **6 页 PDF**（中文字体嵌入，4 张图表）

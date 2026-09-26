@@ -18,7 +18,9 @@ class FeatureType(IntEnum):
     HIGH = 2
     LOW = 3
     VOLUME = 4
-    TURNOVER_RATE = 5
+    TURNOVER_RATE = 5  # 历史别名：枚举位 5 实际承载 vwap（=amount/volume，见 daily_cache）。
+    # RL token 展示为 $turnover_rate 但语义是 vwap；转译代码 expr_to_factor_code
+    # 按同一 index 映射取 fields["vwap"]，展示名与语义的对应以本注释为准。
     VWAP = 5  # Backward-compatible alias for the old 5-minute cache.
 
 

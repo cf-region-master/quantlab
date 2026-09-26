@@ -1,0 +1,48 @@
+# 5 分钟频率因子卡（真实分钟数据：D:/data_code/hft_5m_csi300.csv 宽表 → 5 分钟面板）
+# 口径：window/horizon 单位均为 5 分钟 bar（48 bar = 1 个交易日）；统一方向：分数越高，预期收益越高
+frequency: 5m
+factors:
+  mom48:
+    name: "5m·1日动量"
+    hypothesis: "日内动量：日内累计涨幅较强的标的短期延续"
+    formula: "C(t) / C(t-48) - 1（48根5分钟bar=1个交易日）"
+    fields: [close]
+    window: 48
+    direction: "分数越高，预期收益越高（日内动量看多）"
+    missing_policy: "窗口不足或bar缺失记缺失(NaN)，不填零；截面有效样本<10 记缺失"
+    failure_modes: ["日内均值回复主导时失效", "隔夜跳空截断", "尾盘流动性差时段噪声大"]
+    operator: momentum
+    params: {window: 48}
+    preprocess: [winsorize, zscore]
+
+  rev12:
+    name: "5m·1小时反转"
+    hypothesis: "分钟级均值回复：近1小时急跌的标的短期反弹"
+    formula: "-( C(t) / C(t-12) - 1 )（12根bar=1小时）"
+    fields: [close]
+    window: 12
+    direction: "取负号：分数越高=近期跌幅越大=预期反弹收益越高"
+    missing_policy: "同 mom48；负号在公式内保证统一方向"
+    failure_modes: ["趋势/动量主导时段失效", "涨跌停无法反弹", "高波动日阈值效应"]
+    operator: reversal
+    params: {window: 12}
+    preprocess: [winsorize, zscore]
+
+  lowvol48:
+    name: "5m·1日低波动"
+    hypothesis: "分钟级低异质波动：日内波动低者风险调整后更稳"
+    formula: "-std( r(t-47), ..., r(t) )，r 为 5 分钟收益"
+    fields: [close]
+    window: 48
+    direction: "取负号：分数越高=近期波动越低=预期收益越高"
+    missing_policy: "窗口内有效收益数<28.8(48*0.6) 记缺失；不填零"
+    failure_modes: ["波动 regime 切换", "与日频低波因子高度相关"]
+    operator: lowvol
+    params: {window: 48}
+    preprocess: [winsorize, zscore]
+
+diagnosis:
+  horizon_days: [48, 240]        # 标签持有期（bar）：48bar=1日，240bar=5日
+  min_cross_section_samples: 10  # 截面最低有效样本（共300只）
+  quantile_groups: 5
+  winsorize_pct: 0.01

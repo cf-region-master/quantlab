@@ -18,56 +18,6 @@ RAW_NAMES = ("open", "close", "high", "low", "volume", "amount")
 BARS_PER_DAY = 48
 
 
-def build_cache(csv_path: Path, cache_dir: Path, max_dates: int | None = None, force: bool = False) -> Path:
-    """把日频宽表流式转换为可内存映射的 [bar, feature, stock] float32 数组。"""
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    data_path, meta_path = cache_dir / "market.npy", cache_dir / "meta.json"
-    if data_path.exists() and meta_path.exists() and not force:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        if meta.get("source_size") == csv_path.stat().st_size and meta.get("max_dates") == max_dates:
-            return cache_dir
-
-    dates: set[str] = set()
-    stocks: set[str] = set()
-    for chunk in pd.read_csv(csv_path, usecols=["datetime", "instrument"], chunksize=200_000):
-        dates.update(chunk["datetime"].astype(str).unique())
-        stocks.update(chunk["instrument"].astype(str).unique())
-    date_list = sorted(dates)
-    if max_dates is not None:
-        date_list = date_list[:max_dates]
-    stock_list = sorted(stocks)
-    date_to_idx = {x: i for i, x in enumerate(date_list)}
-    stock_to_idx = {x: i for i, x in enumerate(stock_list)}
-
-    arr = open_memmap(data_path, mode="w+", dtype="float32",
-                      shape=(len(date_list) * BARS_PER_DAY, len(FEATURE_NAMES), len(stock_list)))
-    arr[:] = np.nan
-    raw_cols = [f"{name}{bar}" for name in RAW_NAMES for bar in range(1, BARS_PER_DAY + 1)]
-    usecols = ["datetime", "instrument", *raw_cols]
-    for chunk in pd.read_csv(csv_path, usecols=usecols, chunksize=20_000):
-        keep = chunk["datetime"].astype(str).isin(date_to_idx)
-        chunk = chunk.loc[keep]
-        if chunk.empty: continue
-        d = chunk["datetime"].astype(str).map(date_to_idx).to_numpy()
-        s = chunk["instrument"].astype(str).map(stock_to_idx).to_numpy()
-        t = d[:, None] * BARS_PER_DAY + np.arange(BARS_PER_DAY)[None, :]
-        si = np.broadcast_to(s[:, None], t.shape)
-        for fi, raw in enumerate(RAW_NAMES):
-            values = chunk[[f"{raw}{bar}" for bar in range(1, BARS_PER_DAY + 1)]].to_numpy(dtype=np.float32)
-            arr[t, fi, si] = values
-        volume = arr[t, int(FeatureType.VOLUME), si]
-        amount = arr[t, int(FeatureType.VWAP), si]
-        arr[t, int(FeatureType.VWAP), si] = np.divide(
-            amount, volume, out=np.full_like(amount, np.nan), where=volume > 0
-        )
-    arr.flush()
-    meta_path.write_text(json.dumps({
-        "dates": date_list, "stocks": stock_list, "bars_per_day": BARS_PER_DAY,
-        "features": FEATURE_NAMES, "source": str(csv_path.resolve()),
-        "source_size": csv_path.stat().st_size, "max_dates": max_dates,
-    }, ensure_ascii=False, indent=2), encoding="utf-8")
-    return cache_dir
-
 
 @dataclass
 class MarketSplit:

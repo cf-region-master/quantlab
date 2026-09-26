@@ -288,9 +288,9 @@ class AlphaGenEngine:
         try:
             self.result.summary = {
                 "pool_size": len(pool.entries),
-                "train": pool.metrics(exact=True),
-                "validation": pool.metrics(valid_calc, exact=True),
-                "test": pool.metrics(test_calc, exact=True),
+                "train": pool.metrics(),
+                "validation": pool.metrics(valid_calc),
+                "test": pool.metrics(test_calc),
                 "data": m.summary(),
                 "segments": self._segment_report(seg),
                 "steps": p.steps, "device": "cpu",

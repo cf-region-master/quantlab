@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 
 from ..config import load_config
-from .preprocess import apply_preprocess
+from .preprocess import apply_preprocess_spec
 
 
 def model_params_of(sig) -> dict:
@@ -60,21 +60,33 @@ def _make_model(p: dict):
 
 def fit_walk_forward(sig, market, start=None, end=None) -> pd.DataFrame:
     """返回样本外信号面板（date × code）。"""
-    from ..storage.store import factor_values
+    from ..storage.db import Factor, get_session
+    from ..storage.store import _apply_pool, factor_values
 
     cfg = load_config()
-    diag = cfg.factors["diagnosis"]
     p = model_params_of(sig)
     comps = list(sig.components or [])
     if not comps:
         raise ValueError("信号没有任何因子分量")
 
-    # 特征：每个因子做截面 winsorize + zscore（与等权/IC 加权保持同一预处理口径）
+    # 特征：每个因子按【自己的预处理 spec】处理，并应用其所属股票池口径。
+    # 与 store.signal_panel 的 weighted 路径同一实现 —— 换 model_type 不改变各因子的
+    # 截面口径（历史 bug：这里曾写死 ["winsorize","zscore"] 且忽略池，导致同一信号
+    # 在 equal_weight 与 linear 下的因子含义不同）。
     feats = {}
     for c in comps:
         fid = int(c["factor_id"])
+        s = get_session()
+        try:
+            f = s.get(Factor, fid)
+            if f is None:
+                raise ValueError(f"因子 {fid} 不存在")
+            spec, f_pool = f.preprocess_spec, f.pool_id
+        finally:
+            s.close()
         v = factor_values(fid)
-        feats[fid] = apply_preprocess(v, ["winsorize", "zscore"], diag)
+        scoped, _ = _apply_pool(v, f_pool, market)
+        feats[fid] = apply_preprocess_spec(scoped, spec)
 
     # 对齐到统一的面板
     idx = None
@@ -95,9 +107,12 @@ def fit_walk_forward(sig, market, start=None, end=None) -> pd.DataFrame:
     d0 = pd.Timestamp(start) if start is not None else dates[0]
     d1 = pd.Timestamp(end) if end is not None else dates[-1]
     refit_points = [d for d in dates if d0 <= d <= d1][:: p["refit_days"]]
+    if not refit_points:
+        raise ValueError(
+            f"区间 [{d0.date()}, {d1.date()}] 内没有任何拟合点"
+            f"（refit_days={p['refit_days']}）；请检查因子值覆盖区间与策略区间")
 
     for r in refit_points:
-        train_end = r - pd.Timedelta(days=0)          # 按交易日切，不用自然日
         pos_r = dates.get_loc(r)
         lo_pos = max(0, pos_r - p["train_window"])
         hi_pos = pos_r - p["label_horizon"] - p["purge"]   # 标签须在 r 之前完全可观测
@@ -125,9 +140,7 @@ def fit_walk_forward(sig, market, start=None, end=None) -> pd.DataFrame:
             log.append(f"{r.date()}: 拟合失败 {type(e).__name__}: {e}")
             continue
 
-        # 预测下一段（样本外）
-        seg = [d for d in dates if r <= d < r + pd.Timedelta(days=p["refit_days"] * 1)]
-        # 用位置切片更稳妥
+        # 预测下一段（样本外）：按交易日位置切片
         seg_pos = list(range(pos_r, min(pos_r + p["refit_days"], len(dates))))
         seg_dates = dates[seg_pos]
         Xp = np.stack([v.reindex(index=seg_dates).to_numpy(dtype="float64")

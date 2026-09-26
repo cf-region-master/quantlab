@@ -220,7 +220,12 @@ class AlphaPool:
         norm = np.abs(weights).sum()
         return (weights / norm if norm > 1e-12 else weights).astype(np.float32)
 
-    def metrics(self, calculator: Calculator | None = None, exact: bool = True) -> dict[str, float | int]:
+    def metrics(self, calculator: Calculator | None = None) -> dict[str, float | int]:
+        """池指标（流式充分统计量口径）。
+
+        说明：历史签名带 exact 参数但实现从未区分，属误导性接口；现予以移除。
+        如需「精确全样本重算」指标，走平台的因子诊断链路（run_diagnostics）。
+        """
         split = "train" if calculator is None else calculator.split
         return self.train.pool_metrics(self.factor_store, len(self.entries), self.weights, split)
 

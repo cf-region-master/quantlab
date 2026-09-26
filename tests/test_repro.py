@@ -10,8 +10,15 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 
+def _local_data_ready() -> bool:
+    from quantlab.config import ROOT
+    return (ROOT / "data" / "raw" / "manifest.json").exists()
+
+
 def test_raw_snapshot_manifest_integrity():
     """原始快照完整性：manifest 中每个文件的 sha256 与实际文件一致。"""
+    if not _local_data_ready():
+        pytest.skip("本地无 data/raw 快照（干净克隆属预期）；抓数后自动恢复")
     manifest = json.loads((ROOT / "data" / "raw" / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["files"], "manifest 不应为空"
     import hashlib
@@ -29,6 +36,8 @@ def test_raw_snapshot_manifest_integrity():
 
 def test_clean_quality_report_fields():
     """质量报告包含 Project1 要求的关键项，且缺失值不填零。"""
+    if not (ROOT / "data" / "clean" / "quality_report.json").exists():
+        pytest.skip("本地无 data/clean 清洗产物（先跑 run_pipeline）")
     qr = json.loads((ROOT / "data" / "clean" / "quality_report.json").read_text(encoding="utf-8"))
     agg = qr["aggregate"]
     for key in ("duplicate_dates_dropped_total", "illegal_total", "missing_close_adj_cells",
@@ -51,6 +60,8 @@ def test_clean_quality_report_fields():
 
 def test_pipeline_rerun_deterministic(tmp_path):
     """同数据+同配置重跑：主要数值结果哈希一致（声明容差=0）。"""
+    if not (ROOT / "data" / "raw").exists():
+        pytest.skip("本地无 data/raw 快照（干净克隆属预期）；抓数后自动恢复")
     from quantlab.config import load_config
     from quantlab.pipeline import ensure_clean, build_factor_suite, build_signal_panel, run_single_backtest
     cfg = load_config()

@@ -88,10 +88,10 @@ def index_member_mask(indices: list[str],
         days = pd.DatetimeIndex(sorted(pd.DatetimeIndex(dates).unique()))
     symbols = sorted(sub["symbol"].unique())
 
-    mask = pd.DataFrame(False, index=days, columns=symbols)
+    data: dict[str, np.ndarray] = {}
     # 只对落在目标日历内的区间片段打标；逐区间切片，4033 段规模可接受
     for sym, grp in sub.groupby("symbol", sort=False):
-        col = mask[sym].to_numpy()
+        col = np.zeros(len(days), dtype=bool)  # 独立数组，避开 pandas CoW 只读视图
         pos = days
         for lo, hi in zip(grp["start"].to_numpy(), grp["end"].to_numpy()):
             lo, hi = pd.Timestamp(lo), pd.Timestamp(hi)
@@ -99,7 +99,8 @@ def index_member_mask(indices: list[str],
                 continue
             sel = (pos >= lo) & (pos < hi)
             col |= sel
-        mask[sym] = col
+        data[sym] = col
+    mask = pd.DataFrame(data, index=days, columns=symbols)
     mask.columns.name = "code"
     return mask
 

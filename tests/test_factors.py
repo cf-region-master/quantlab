@@ -378,6 +378,8 @@ def test_segment_split_explicit_bounds():
 
 def test_alphagen_segments_purge_matches_gp():
     """两个引擎的防泄漏规则必须一致（AlphaGen 曾经漏了 purge）。"""
+    pytest.importorskip("torch")
+    pytest.importorskip("sb3_contrib")
     from quantlab.lab.alphagen_engine import AlphaGenEngine, AlphaGenParams
     from quantlab.lab.gp_engine import segment_split
 

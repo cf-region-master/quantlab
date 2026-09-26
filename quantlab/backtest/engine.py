@@ -151,10 +151,13 @@ def run_backtest(signal: pd.DataFrame, market, bt_cfg: dict, name: str = "bt",
     cost_cfg = bt_cfg["cost"]
     cb_cfg = float(cost_cfg["commission_buy"])
     cs_cfg = float(cost_cfg["commission_sell"])
+    # 印花税：卖出单边（A股 2023-08-28 起 0.05%，此前 0.1%；时间变动未建模，见 README 局限）
+    stamp_cfg = float(cost_cfg.get("stamp_duty_sell", 0.0))
     slip = 0.0 if disable_cost else float(cost_cfg.get("slippage", 0.0))
     # 决策用费率（始终取配置值，保证毛/净决策一致）与实际扣费用率（毛跑时为 0）
     cb_dec, cs_dec = cb_cfg, cs_cfg
     cb_chg, cs_chg = (0.0, 0.0) if disable_cost else (cb_cfg, cs_cfg)
+    stamp_chg = 0.0 if disable_cost else stamp_cfg
 
     port = bt_cfg["portfolio"]
     top_n = int(port["top_n"])
@@ -252,12 +255,15 @@ def run_backtest(signal: pd.DataFrame, market, bt_cfg: dict, name: str = "bt",
                 px = float(open_px.at[exec_day, code])
                 px_exec = px * (1 - slip)
                 amount = qty * px_exec
-                fee = cs_chg * amount
+                commission = cs_chg * amount
+                stamp = stamp_chg * amount
+                fee = commission + stamp
                 cash += amount - fee
                 sell_amount_total += amount
                 trades.append({"date": str(exec_day.date()), "code": code, "side": "sell",
                                "shares": float(qty), "price": px_exec,
-                               "amount": float(amount), "cost": float(fee)})
+                               "amount": float(amount), "cost": float(fee),
+                               "commission": float(commission), "stamp_duty": float(stamp)})
                 cost_rows.append({"date": exec_day, "cost": fee})
                 if tgt <= 1e-9:
                     del shares[code]
@@ -297,14 +303,16 @@ def run_backtest(signal: pd.DataFrame, market, bt_cfg: dict, name: str = "bt",
                 px = float(open_px.at[exec_day, code])
                 px_exec = px * (1 + slip)
                 amount = q * px_exec
-                fee = cb_chg * amount
+                commission = cb_chg * amount
+                fee = commission  # 买入无印花税
                 cash -= amount + fee
                 shares[code] = shares.get(code, 0.0) + q
                 last_close.setdefault(code, px)
                 buy_amount_total += amount
                 trades.append({"date": str(exec_day.date()), "code": code, "side": "buy",
                                "shares": float(q), "price": px_exec,
-                               "amount": float(amount), "cost": float(fee)})
+                               "amount": float(amount), "cost": float(fee),
+                               "commission": float(commission), "stamp_duty": 0.0})
                 cost_rows.append({"date": exec_day, "cost": fee})
 
             if buy_amount_total + sell_amount_total > 0:
