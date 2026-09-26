@@ -41,6 +41,8 @@ def reset_caches() -> dict:
     _market = None
     _close_5m = None
     _pool_cache.clear()
+    _fv_cache.clear()
+    _decay_cache.clear()
     try:
         from ..data import fundamentals
         fundamentals.clear_cache()
@@ -303,13 +305,32 @@ def _compute_and_store_metrics(f: Factor, values: pd.DataFrame, s) -> None:
     # 不在此处 commit：由 register_factor 统一提交，保证与因子行同一事务
 
 
-def factor_values(factor_id: int) -> pd.DataFrame:
+_fv_cache: dict[int, pd.DataFrame] = {}
+_FV_CACHE_MAX = 24   # 每份面板 ~MB 级；信号合成/诊断会反复读同一因子
+
+
+def factor_values(factor_id: int, use_cache: bool = True) -> pd.DataFrame:
+    """因子值宽表（LRU 进程内缓存）。
+
+    因子值 parquet 只在 refresh/adopt 时重写，且两者都会先清缓存 ——
+    因此这里缓存安全；外部改文件后可 store.reset_caches()。
+    """
+    if use_cache and factor_id in _fv_cache:
+        return _fv_cache[factor_id]
     s = get_session()
     try:
         f = s.get(Factor, factor_id)
-        return pd.read_parquet(f.values_path)
+        if f is None:
+            raise ValueError(f"因子 {factor_id} 不存在")
+        path = f.values_path
     finally:
         s.close()
+    df = pd.read_parquet(path)
+    if use_cache:
+        if len(_fv_cache) >= _FV_CACHE_MAX:   # 简单 FIFO 淘汰
+            _fv_cache.pop(next(iter(_fv_cache)))
+        _fv_cache[factor_id] = df
+    return df
 
 
 def builtin_card_for(f: Factor) -> FactorCard:
@@ -1808,6 +1829,7 @@ def refresh_factor(factor_id: int, pool_id: int | None = None,
         tmp_path = _write_values_tmp(f.id, values)
         s.flush()
         _compute_and_store_metrics(f, values, s)
+        _fv_cache.pop(f.id, None)
         if f.pool_id != old_pool:
             f.notes = (f.notes or "") + f" | 股票池变更 {old_pool} -> {f.pool_id}（截面已变）"
         if spec is not None and normalize_spec(spec) != before_spec:
