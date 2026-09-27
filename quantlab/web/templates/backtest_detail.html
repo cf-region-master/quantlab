@@ -51,6 +51,16 @@
 <div id="navChart" class="chart" style="height:380px;"></div>
 <div class="chart-note">纵轴为货币金额（初始 {{ '{:,.0f}'.format(meta.initial_cash or 0) }} 元）；回撤为相对历史高点的跌幅（右轴，%）。</div>
 
+{% if monthly and monthly.cells %}
+<h2>月度收益热力图（净）</h2>
+<div id="mmChart" class="chart" style="height:{{ 150 + monthly.years|length * 56 }}px;"></div>
+<div class="chart-note">
+  盈利月 {{ monthly.n_pos }}/{{ monthly.n_months }}（{{ '%.0f%%'|format(monthly.n_pos / monthly.n_months * 100) }}）；
+  {% for y in monthly.yearly %}{{ y.y }} 年 {{ '%+.2f%%'|format(y.ret*100) }}{% if not loop.last %} · {% endif %}{% endfor %}。
+  月内按净值复利，首月以回测起点为基期。
+</div>
+{% endif %}
+
 <h2>换手与成本（每次调仓）</h2>
 <div id="toChart" class="chart" style="height:270px;"></div>
 
@@ -114,6 +124,28 @@ if (res.turnover && res.turnover.index && res.turnover.index.length) {
             {name:'成本', type:'line', yAxisIndex:1, showSymbol:false,
              data:(res.cost_series && res.cost_series.values || []).map(wrap)}]});
 }
+{% if monthly and monthly.cells %}
+{
+  const mm = echarts.init(document.getElementById('mmChart'));
+  window.__charts.push(mm);
+  const cells = {{ monthly.cells|tojson }};
+  const years = {{ monthly.years|tojson }};
+  const data = cells.map(c => [c.m - 1, years.indexOf(c.y), +(c.ret * 100).toFixed(2)]);
+  mm.setOption({
+    tooltip:{position:'top', valueFormatter: v => (v==null?'—':(+v).toFixed(2)+'%')},
+    grid:{left:70, right:90, top:14, bottom:44},
+    xAxis:{type:'category', data:['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'],
+           splitArea:{show:true}},
+    yAxis:{type:'category', data:years, splitArea:{show:true}},
+    visualMap:{min:-8, max:8, calculable:true, orient:'vertical', right:6, top:'center',
+               inRange:{color:['#2e7d32','#ffffff','#c62828']},
+               text:['盈利%','亏损%']},
+    series:[{type:'heatmap', data,
+             label:{show:true, formatter: p => (p.value[2]>0?'+':'')+p.value[2]+'%'},
+             emphasis:{itemStyle:{shadowBlur:6, shadowColor:'rgba(0,0,0,0.4)'}}}]
+  });
+}
+{% endif %}
 window.addEventListener('resize', ()=>window.__charts.forEach(c=>c && c.resize()));
 </script>
 {% endblock %}

@@ -421,6 +421,7 @@ def page_backtest_detail(request: Request, bid: int):
     cfg = load_config()
     chart_json = {k: run.get(k) for k in
                   ("nav", "nav_gross", "benchmark", "turnover", "cost_series") if run.get(k)}
+    monthly = _monthly_returns(run.get("nav") or {})
     runs = store.list_backtests()
     meta = next((b for b in runs if b["id"] == bid), {})
     sig = store.get_signal(meta.get("signal_id")) if meta.get("signal_id") else None
@@ -431,7 +432,37 @@ def page_backtest_detail(request: Request, bid: int):
         "gn": (run.get("checks") or {}).get("gross_net_attribution") or {},
         "gates": _gate_rows(run.get("checks") or {}),
         "chart_json": chart_json,
+        "monthly": monthly,
     })
+
+
+def _monthly_returns(nav: dict) -> dict:
+    """从净值曲线推导 月×年 收益矩阵（月内复利；首月以曲线起点为基期）。"""
+    idx = nav.get("index") or []
+    vals = nav.get("values") or []
+    if len(idx) < 2 or len(idx) != len(vals):
+        return {}
+    month_last: dict[str, float] = {}
+    for dt, v in zip(idx, vals):
+        month_last[str(dt)[:7]] = float(v)  # 顺序遍历自然留下月末值
+    keys = sorted(month_last)
+    base = float(vals[0])
+    cells, yearly = [], {}
+    for i, k in enumerate(keys):
+        prev = base if i == 0 else month_last[keys[i - 1]]
+        if prev <= 0 or month_last[k] != month_last[k]:  # 基期非正或 NaN
+            continue
+        ret = month_last[k] / prev - 1.0
+        y, m = int(k[:4]), int(k[5:7])
+        cells.append({"y": y, "m": m, "ret": round(ret, 6)})
+        yearly[y] = yearly.get(y, 1.0) * (1.0 + ret)
+    if not cells:
+        return {}
+    years = sorted({c["y"] for c in cells})
+    return {"cells": cells, "years": years,
+            "yearly": [{"y": y, "ret": round(yearly[y] - 1.0, 6)} for y in years],
+            "n_pos": sum(1 for c in cells if c["ret"] > 0),
+            "n_months": len(cells)}
 
 
 @app.get("/strategies", response_class=HTMLResponse)
