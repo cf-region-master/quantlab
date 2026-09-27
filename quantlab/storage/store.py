@@ -618,6 +618,7 @@ def last_backtest_config() -> dict:
             "commission_buy": cost.get("commission_buy"),
             "commission_sell": cost.get("commission_sell"),
             "slippage": cost.get("slippage"),
+            "risk": d.get("risk_json") or {},
             "from_run_id": d.get("id"),
         }
     finally:
@@ -726,6 +727,10 @@ def norm_pool_id(pool_id) -> int | None:
                     return int(p_.id)
         finally:
             s.close()
+        # 干净环境可能尚未初始化内置池；按 DEFAULT_POOLS 的声明顺序返回稳定 id。
+        for idx, (_name, _desc, kind, indices, _codes) in enumerate(DEFAULT_POOLS, 1):
+            if key == kind or probe in indices or key in indices:
+                return None if kind == "all" else idx
         raise ValueError(f"未知股票池: {pool_id}")
     p = get_pool(pid)
     if p is not None and p.get("kind") == "all":
@@ -1899,6 +1904,7 @@ def run_backtest_for_signal(*, signal_id: int, start_date, end_date,
                             weighting: str = "equal_weight",
                             rebalance_freq: str = "weekly",
                             initial_cash: float | None = None,
+                            risk_override: dict | None = None,
                             cost_override: dict | None = None,
                             industry_neutral: bool = False,
                             vol_target: float | None = None,
@@ -1929,6 +1935,13 @@ def run_backtest_for_signal(*, signal_id: int, start_date, end_date,
         raise ValueError("回测区间起点必须早于终点")
 
     panel = signal_panel(sig, mk, start, end)
+    if panel.empty or panel.shape[1] == 0 or not np.isfinite(
+            panel.to_numpy(dtype="float64")).any():
+        raise ValueError(
+            "该信号在回测区间内没有有效值，无法生成交易。"
+            "请检查信号使用的因子是否为当前数据版本、模型依赖是否安装，"
+            "以及信号和股票池的代码/日期是否匹配。"
+        )
     pool_mask, pool_note = pool_mask_for(pool_id, mk)
 
     bt_cfg = dict(cfg.backtest)
@@ -1936,6 +1949,7 @@ def run_backtest_for_signal(*, signal_id: int, start_date, end_date,
         bt_cfg["initial_cash"] = float(initial_cash)
     bt_cfg["rebalance"] = {**bt_cfg["rebalance"], "freq": rebalance_freq}
     bt_cfg["portfolio"] = {**bt_cfg["portfolio"], "top_n": int(top_n), "weighting": weighting}
+    bt_cfg["risk"] = dict(risk_override or cfg.backtest.get("risk") or {})
     bt_cfg["cost"] = {**bt_cfg["cost"], **(cost_override or {})}
     bt_cfg["sample"] = {"start": str(start.date()), "end": str(end.date())}
     bt_cfg["trading_days_per_year"] = int(cfg.data["trading_days_per_year"])
@@ -1982,7 +1996,8 @@ def run_backtest_for_signal(*, signal_id: int, start_date, end_date,
                           pool_id=pool_id, pool_note=pool_note, top_n=int(top_n),
                           weighting=weighting, rebalance_freq=rebalance_freq,
                           initial_cash=float(bt_cfg["initial_cash"]),
-                          cost_json=bt_cfg["cost"], metrics_json=net.metrics,
+                          cost_json=bt_cfg["cost"], risk_json=bt_cfg["risk"],
+                          metrics_json=net.metrics,
                           checks_json=checks)
         s.add(run)
         s.commit()

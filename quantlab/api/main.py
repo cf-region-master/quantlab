@@ -607,10 +607,22 @@ def action_run_backtest(request: Request, signal_id: int = Form(...),
                         industry_neutral: str = Form(""),
                         vol_target_enabled: str = Form(""),
                         vol_target: float = Form(0.15),
-                        vol_window: int = Form(60)):
+                        vol_window: int = Form(60),
+                        stop_loss_pct: float = Form(0.0),
+                        take_profit_pct: float = Form(0.0),
+                        ma_windows: list[int] = Form([]),
+                        reentry_days: int = Form(20)):
+    risk_override = {
+        "stop_loss_pct": max(0.0, float(stop_loss_pct)) / 100.0,
+        "take_profit_pct": max(0.0, float(take_profit_pct)) / 100.0,
+        "ma_windows": sorted({int(x) for x in ma_windows if 2 <= int(x) <= 500}),
+        "reentry_days": max(0, int(reentry_days)),
+        "execution": "next_open",
+    }
     payload = dict(signal_id=signal_id, start_date=start_date, end_date=end_date,
                    pool_id=pool_id or None, top_n=top_n, weighting=weighting,
                    rebalance_freq=rebalance_freq, initial_cash=initial_cash,
+                   risk_override=risk_override,
                    industry_neutral=bool(industry_neutral),
                    vol_target=(float(vol_target) if vol_target_enabled else None),
                    vol_window=int(vol_window),

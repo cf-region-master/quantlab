@@ -112,6 +112,35 @@ def target_weights(selected: list[str], scores: pd.Series, weighting: str,
     return {c: raw[c] / tot * exposure for c in selected}
 
 
+def normalize_risk_config(bt_cfg: dict) -> dict[str, Any]:
+    """规整策略风控参数。
+
+    百分比字段使用小数：0.10 = 10%。均线窗口为交易日，触发判断使用收盘价。
+    触发后强制下一交易日开盘全仓卖出；停牌/缺价则逐日顺延。
+    """
+    raw = dict(bt_cfg.get("risk") or {})
+    stop_loss = max(0.0, float(raw.get("stop_loss_pct") or 0.0))
+    take_profit = max(0.0, float(raw.get("take_profit_pct") or 0.0))
+    windows = raw.get("ma_windows") or []
+    if isinstance(windows, str):
+        windows = windows.replace("，", ",").split(",")
+    clean_windows: list[int] = []
+    for value in windows:
+        try:
+            window = int(value)
+        except (TypeError, ValueError):
+            continue
+        if 2 <= window <= 500 and window not in clean_windows:
+            clean_windows.append(window)
+    return {
+        "stop_loss_pct": stop_loss,
+        "take_profit_pct": take_profit,
+        "ma_windows": sorted(clean_windows),
+        "reentry_days": max(0, int(raw.get("reentry_days") or 0)),
+        "execution": "next_open",
+    }
+
+
 @dataclass
 class BacktestResult:
     name: str
@@ -125,6 +154,7 @@ class BacktestResult:
     events: list[dict]
     formation_dates: list[pd.Timestamp]
     rebalance_log: list[dict] = field(default_factory=list)  # 每次调仓的形成日/成交日/目标
+    risk_summary: dict = field(default_factory=dict)          # 风控触发与强制执行统计
     nav_gross: pd.Series | None = None
     benchmark_nav: pd.Series | None = None
     metrics: dict = field(default_factory=dict)
@@ -150,6 +180,7 @@ class BacktestResult:
             "checks": self.checks,
             "formation_dates": [str(d.date()) for d in self.formation_dates],
             "n_rebalances_logged": len(self.rebalance_log),
+            "risk_summary": self.risk_summary,
         }
         if self.nav_gross is not None:
             out["nav_gross"] = {"index": [str(d.date()) for d in self.nav_gross.index],
@@ -194,6 +225,9 @@ def run_backtest(signal: pd.DataFrame, market, bt_cfg: dict, name: str = "bt",
     lot = int(port.get("lot_size", 100) or 0)
     freq = bt_cfg["rebalance"]["freq"]
     h = bt_cfg["rebalance"].get("h")
+    risk_cfg = normalize_risk_config(bt_cfg)
+    risk_enabled = bool(
+        risk_cfg["stop_loss_pct"] or risk_cfg["take_profit_pct"] or risk_cfg["ma_windows"])
 
     open_px, close_px, vol, susp = market.open_adj, market.close_adj, market.volume, market.suspended
     # 成交/估值日历必须限定在 bt_cfg["sample"] 声明的区间内。
@@ -215,6 +249,17 @@ def run_backtest(signal: pd.DataFrame, market, bt_cfg: dict, name: str = "bt",
 
     cash = float(bt_cfg.get("initial_cash", 1_000_000.0))
     shares: dict[str, float] = {}
+    cost_basis: dict[str, float] = {}
+    risk_block_until: dict[str, int] = {}
+    pending_risk_exits: dict[str, dict[str, Any]] = {}
+    ma_panels: dict[int, pd.DataFrame] = {}
+    risk_summary: dict[str, Any] = {
+        "n_triggers": 0,
+        "n_forced_sells": 0,
+        "n_deferred_sells": 0,
+        "by_reason": {},
+        "total_sell_amount": 0.0,
+    }
     last_close: dict[str, float] = {}
     nav_rows, trades, events, hold_rows = [], [], [], []
     turnover_rows, cost_rows, rebalance_rows = [], [], []
@@ -229,12 +274,61 @@ def run_backtest(signal: pd.DataFrame, market, bt_cfg: dict, name: str = "bt",
             v += sh * last_close.get(code, np.nan)
         return v
 
+    def tradable(code: str, day: pd.Timestamp) -> bool:
+        if code not in open_px.columns:
+            return False
+        px = open_px.at[day, code]
+        is_susp = bool(susp.at[day, code]) if code in susp.columns else True
+        return bool(np.isfinite(px) and px > 0 and not is_susp)
+
     for i, d in enumerate(dates):
+        nav_prev = cash + sum(sh * last_close.get(c, np.nan) for c, sh in shares.items())
+        risk_sell_amount = 0.0
+
+        # ---- 风控卖出：上一交易日收盘触发，今日开盘全仓卖出；不可成交则顺延 ----
+        for code, meta in list(pending_risk_exits.items()):
+            if code not in shares:
+                pending_risk_exits.pop(code, None)
+                continue
+            if not tradable(code, d):
+                risk_summary["n_deferred_sells"] += 1
+                events.append({
+                    "date": str(d.date()), "type": "risk_exit_deferred", "code": code,
+                    "reason": "suspended_or_missing_open",
+                    "trigger_date": str(pd.Timestamp(meta["trigger_date"]).date()),
+                    "reasons": meta["reasons"],
+                })
+                continue
+            qty = float(shares[code])
+            px = float(open_px.at[d, code])
+            px_exec = px * (1 - slip)
+            amount = qty * px_exec
+            commission = cs_chg * amount
+            stamp = stamp_chg * amount
+            fee = commission + stamp
+            cash += amount - fee
+            risk_sell_amount += amount
+            trades.append({
+                "date": str(d.date()), "code": code, "side": "sell",
+                "shares": qty, "price": px_exec, "amount": float(amount),
+                "cost": float(fee), "commission": float(commission),
+                "stamp_duty": float(stamp), "kind": "risk_exit",
+                "trigger_date": str(pd.Timestamp(meta["trigger_date"]).date()),
+                "reasons": list(meta["reasons"]),
+            })
+            cost_rows.append({"date": d, "cost": fee})
+            risk_summary["n_forced_sells"] += 1
+            risk_summary["total_sell_amount"] += amount
+            del shares[code]
+            cost_basis.pop(code, None)
+            pending_risk_exits.pop(code, None)
+
         # ---- 当日可执行的调仓：昨日（形成日 t）收盘信号 → 今日开盘成交 ----
+        sell_amount_total = 0.0
+        buy_amount_total = 0.0
         if i > 0 and dates[i - 1] in fset:
             t = dates[i - 1]
             exec_day = d
-            nav_prev = cash + sum(sh * last_close.get(c, np.nan) for c, sh in shares.items())
 
             pool_row = None
             if pool_mask is not None and t in pool_mask.index:
@@ -242,10 +336,15 @@ def run_backtest(signal: pd.DataFrame, market, bt_cfg: dict, name: str = "bt",
             ind_row = None
             if industry_labels is not None and t in industry_labels.index:
                 ind_row = industry_labels.loc[t]
-            selected = (select_top(signal.loc[t], pool_row, top_n,
-                                   industry_row=ind_row,
-                                   max_per_industry=max_per_industry)
-                        if t in signal.index else [])
+            raw_selected = (select_top(signal.loc[t], pool_row, top_n,
+                                       industry_row=ind_row,
+                                       max_per_industry=max_per_industry)
+                            if t in signal.index else [])
+            blocked = {
+                code for code, until in risk_block_until.items()
+                if i <= until or code in pending_risk_exits
+            }
+            selected = [code for code in raw_selected if code not in blocked]
             exposure_i = exposure
             if vol_target is not None and i >= 2:
                 hist_nav = pd.Series([r["nav"] for r in nav_rows[-vol_window:]],
@@ -261,20 +360,15 @@ def run_backtest(signal: pd.DataFrame, market, bt_cfg: dict, name: str = "bt",
             w = target_weights(selected, signal.loc[t], weighting, exposure_i) if selected else {}
             rebalance_rows.append({"formation_date": str(t.date()),
                                    "exec_date": str(exec_day.date()),
+                                   "raw_targets": list(raw_selected),
                                    "targets": list(selected),
+                                   "risk_blocked": sorted(blocked.intersection(raw_selected)),
                                    "weights": {c: round(float(v), 8) for c, v in w.items()}})
-
-            def tradable(code: str) -> bool:
-                if code not in open_px.columns:
-                    return False
-                px = open_px.at[exec_day, code]
-                is_susp = bool(susp.at[exec_day, code]) if code in susp.columns else True
-                return bool(np.isfinite(px) and px > 0 and not is_susp)
 
             # ---------- 1) 计算目标股数（费率在权重→股数换算时计入） ----------
             target: dict[str, float] = {}
             for code, wi in w.items():
-                if not tradable(code):
+                if not tradable(code, exec_day):
                     continue
                 px = float(open_px.at[exec_day, code])
                 notional = nav_prev * wi
@@ -290,11 +384,13 @@ def run_backtest(signal: pd.DataFrame, market, bt_cfg: dict, name: str = "bt",
             # 毛/净两条路径因此分叉。
             sell_amount_total = 0.0
             for code in list(shares.keys()):
+                if code in pending_risk_exits:
+                    continue
                 tgt = target.get(code, 0.0)
                 cur = shares[code]
                 if cur <= tgt + 1e-9:
                     continue
-                if not tradable(code):
+                if not tradable(code, exec_day):
                     events.append({"date": str(exec_day.date()), "type": "sell_deferred",
                                    "code": code, "reason": "suspended_or_missing_open"})
                     continue
@@ -310,10 +406,12 @@ def run_backtest(signal: pd.DataFrame, market, bt_cfg: dict, name: str = "bt",
                 trades.append({"date": str(exec_day.date()), "code": code, "side": "sell",
                                "shares": float(qty), "price": px_exec,
                                "amount": float(amount), "cost": float(fee),
-                               "commission": float(commission), "stamp_duty": float(stamp)})
+                               "commission": float(commission), "stamp_duty": float(stamp),
+                               "kind": "rebalance"})
                 cost_rows.append({"date": exec_day, "cost": fee})
                 if tgt <= 1e-9:
                     del shares[code]
+                    cost_basis.pop(code, None)
                 else:
                     shares[code] = cur - qty
 
@@ -353,19 +451,25 @@ def run_backtest(signal: pd.DataFrame, market, bt_cfg: dict, name: str = "bt",
                 commission = cb_chg * amount
                 fee = commission  # 买入无印花税
                 cash -= amount + fee
-                shares[code] = shares.get(code, 0.0) + q
+                old_qty = shares.get(code, 0.0)
+                old_cost = cost_basis.get(code, px_exec)
+                shares[code] = old_qty + q
+                cost_basis[code] = ((old_qty * old_cost) + q * px_exec) / shares[code]
                 last_close.setdefault(code, px)
                 buy_amount_total += amount
                 trades.append({"date": str(exec_day.date()), "code": code, "side": "buy",
                                "shares": float(q), "price": px_exec,
                                "amount": float(amount), "cost": float(fee),
-                               "commission": float(commission), "stamp_duty": 0.0})
+                               "commission": float(commission), "stamp_duty": 0.0,
+                               "kind": "rebalance"})
                 cost_rows.append({"date": exec_day, "cost": fee})
 
-            if buy_amount_total + sell_amount_total > 0:
-                v_prev = nav_prev if nav_prev > 0 else np.nan
+            turnover_amount = risk_sell_amount + buy_amount_total + sell_amount_total
+            if turnover_amount > 0 and nav_prev > 0:
                 turnover_rows.append({"date": exec_day,
-                                      "turnover": (buy_amount_total + sell_amount_total) / v_prev})
+                                      "turnover": turnover_amount / nav_prev})
+        elif risk_sell_amount > 0 and nav_prev > 0:
+            turnover_rows.append({"date": d, "turnover": risk_sell_amount / nav_prev})
 
         # ---- 逐日盯市 ----
         nav = mark_to_market(d)
@@ -382,6 +486,48 @@ def run_backtest(signal: pd.DataFrame, market, bt_cfg: dict, name: str = "bt",
                         for c, sh in shares.items() if nav > 0},
         })
 
+        # ---- 收盘风控检查：次一交易日开盘执行 ----
+        if risk_enabled and i + 1 < len(dates):
+            for code, sh in list(shares.items()):
+                if sh <= 0 or code in pending_risk_exits:
+                    continue
+                px = close_px.at[d, code] if code in close_px.columns else np.nan
+                if not np.isfinite(px) or px <= 0:
+                    continue
+                reasons: list[str] = []
+                entry = cost_basis.get(code)
+                if np.isfinite(entry) and entry > 0:
+                    pnl = float(px) / float(entry) - 1.0
+                    if risk_cfg["stop_loss_pct"] > 0 and pnl <= -risk_cfg["stop_loss_pct"]:
+                        reasons.append("stop_loss")
+                    if risk_cfg["take_profit_pct"] > 0 and pnl >= risk_cfg["take_profit_pct"]:
+                        reasons.append("take_profit")
+                for window in risk_cfg["ma_windows"]:
+                    if window not in ma_panels:
+                        ma_panels[window] = close_px.rolling(
+                            window, min_periods=window).mean()
+                    ma_value = (ma_panels[window].at[d, code]
+                                if code in ma_panels[window].columns else np.nan)
+                    if np.isfinite(ma_value) and float(px) < float(ma_value):
+                        reasons.append(f"close_below_ma{window}")
+                if not reasons:
+                    continue
+                pending_risk_exits[code] = {
+                    "trigger_date": d,
+                    "reasons": reasons,
+                }
+                risk_block_until[code] = i + risk_cfg["reentry_days"]
+                risk_summary["n_triggers"] += 1
+                for reason in reasons:
+                    risk_summary["by_reason"][reason] = (
+                        risk_summary["by_reason"].get(reason, 0) + 1)
+                events.append({
+                    "date": str(d.date()), "type": "risk_trigger", "code": code,
+                    "reasons": reasons, "close": float(px),
+                    "cost_basis": None if entry is None else float(entry),
+                    "next_open_exit": str(dates[i + 1].date()),
+                })
+
     nav_s = pd.DataFrame(nav_rows).set_index("date")["nav"]
     ret_s = nav_s / nav_s.shift(1) - 1
     turnover_s = (pd.DataFrame(turnover_rows).set_index("date")["turnover"]
@@ -397,10 +543,10 @@ def run_backtest(signal: pd.DataFrame, market, bt_cfg: dict, name: str = "bt",
 
     result = BacktestResult(
         name=name, config=json.loads(json.dumps(
-            {**bt_cfg, "_disable_cost": bool(disable_cost)}, default=str)),
+            {**bt_cfg, "risk": risk_cfg, "_disable_cost": bool(disable_cost)}, default=str)),
         nav=nav_s, daily_return=ret_s, trades=trades,
         holdings_history=hold_rows, turnover=turnover_s, cost_series=cost_s,
         events=events, formation_dates=fdates, rebalance_log=rebalance_rows,
-        benchmark_nav=bench_nav,
+        benchmark_nav=bench_nav, risk_summary=risk_summary,
     )
     return result
