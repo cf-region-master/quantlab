@@ -69,6 +69,9 @@ def daily_ic_series(panel: pd.DataFrame, close_adj: pd.DataFrame, h: int,
     """
     from .diagnostics import ic_table_fast
 
+    # 标签价格必须对齐到因子面板的日期：混合历史长度因子集（如 builtin 2022 起
+    # + GP/AlphaGen 2023 起）里短面板会与全长 close_adj 形状不匹配（真 500）
+    close_adj = close_adj.reindex(panel.index)
     t = ic_table_fast(panel, close_adj.shift(-h) / close_adj - 1, min_n)
     return t["rank_ic"] if method == "spearman" else t["ic"]
 

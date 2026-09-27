@@ -1128,12 +1128,25 @@ def factor_data_policy(f: Factor) -> dict:
 
 # ---------------- 信号（策略） ----------------
 def _ic_weights(factor_ids: list[int]) -> dict[int, float]:
-    """ic_weight 模型：按各因子 20 日 RankIC 均值（带符号）归一化加权。"""
+    """ic_weight 模型：按各因子 20 日 RankIC 均值（带符号）归一化加权。
+
+    优先级：h=20 诊断 → 该因子实际存在的最大 horizon（GP/AlphaGen 因子常只有 h=5）
+    → 无任何诊断则 0 权重。历史 bug：硬编码 h=20 时，只有 h=5 的因子被**静默**
+    赋 0 权重（不退化成错，而是悄悄把因子踢出组合）。
+    """
     s = get_session()
     try:
-        ms = {fid: s.query(FactorMetric).filter_by(factor_id=fid, horizon=20).first()
-              for fid in factor_ids}
-        raw = {fid: (m.rank_ic_mean or 0.0) for fid, m in ms.items()}
+        ms = {}
+        for fid in factor_ids:
+            m = s.query(FactorMetric).filter_by(factor_id=fid, horizon=20).first()
+            if m is None:
+                m = (s.query(FactorMetric).filter_by(factor_id=fid)
+                     .order_by(FactorMetric.horizon.desc()).first())
+            ms[fid] = m
+        # 缺诊断的因子（如退化候选：全 NaN/coverage 0）metric 行不存在 →
+        # 按 0 权重处理（不参与组合，也不让 AttributeError 炸掉整个信号）
+        raw = {fid: ((m.rank_ic_mean or 0.0) if m is not None else 0.0)
+               for fid, m in ms.items()}
     finally:
         s.close()
     denom = sum(abs(v) for v in raw.values()) or 1.0

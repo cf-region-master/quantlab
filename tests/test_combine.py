@@ -196,3 +196,29 @@ def test_inversevol_concentrates_on_stable_factor():
                                    h=5, window=120, min_periods=60, min_n=3).dropna()
     assert len(w) > 200
     assert (w["s"] > w["n"]).mean() > 0.9
+
+
+def test_rolling_weights_mixed_history_factors():
+    """混合历史长度因子集（ builtin 2022 起 + GP 2023 起）不得崩：
+    daily_ic_series 必须把标签价格对齐到各因子面板自己的日期。"""
+    close, panels = _panels(n=500, k=2)
+    # 两支都是普通噪声因子（避免"完美 alpha"IC 方差 0 的退化），f1 截短历史
+    cut = close.index[:350]
+    panels_mixed = {
+        "f0": panels["f0"] + pd.DataFrame(
+            np.random.default_rng(5).normal(0, .5, panels["f0"].shape),
+            index=panels["f0"].index, columns=panels["f0"].columns),
+        "f1": panels["f1"].loc[cut],
+    }
+    w = rolling_icir_weights(panels_mixed, close, h=5, window=120, min_periods=60,
+                             min_n=3)
+    w = w.dropna(how="all")
+    assert len(w) > 100
+    # 归一在【全有效】行上校验（短历史因子缺测的行允许单边有效）
+    ok = w.dropna()
+    assert len(ok) > 50
+    # ICIR 权重可负（方向由 IC 均值决定），归一口径是 Σ|w| = 1
+    assert ((ok.abs().sum(axis=1) - 1.0).abs() < 1e-9).all()
+    w2 = rolling_inversevol_weights(panels_mixed, close, h=5, window=120,
+                                    min_periods=60, min_n=3)
+    assert w2.dropna(how="all").shape[0] > 100

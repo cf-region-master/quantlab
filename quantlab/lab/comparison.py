@@ -70,7 +70,15 @@ def compare_combinations(factor_ids: list[int], start: str, end: str,
                                     "min_cross_section_samples": min_cross_section,
                                     "quantile_groups": int(cfg.factors["diagnosis"]
                                                            .get("quantile_groups", 5))})
-            summ = diag[str(horizon)]["ic_summary"]["rank_ic"]
+            # 退化因子（全 NaN/coverage 0）会让该模型面板无有效值：
+            # 如实记为该模型的 error 行，不让单个坏因子炸掉整张对照表
+            _d = diag.get(str(horizon)) or {}
+            summ = ((_d.get("ic_summary") or {}).get("rank_ic")) or {}
+            if (not summ or summ.get("mean") is None
+                    or not np.isfinite(summ.get("mean"))):
+                out[m] = {"error": "因子组合在该区间/截面下无有效 RankIC"
+                                   "（含退化因子或覆盖不足）"}
+                continue
             entry = {"rank_ic_mean": round(summ["mean"], 6),
                      "t_naive": round(summ["t_stat"], 3),
                      "t_nw": round(summ["t_stat_nw"], 3)
