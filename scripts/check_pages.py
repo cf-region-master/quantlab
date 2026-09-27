@@ -32,6 +32,9 @@ PAGES = [
     "/api/signals/9/combination-report.pdf",
     "/api/factors/1/ic.csv?horizon=5",
     "/api/signals/9/ic.csv",
+    "/signals/15",
+    "/signals/16",
+    "/factors/16",
 ]
 
 
