@@ -106,13 +106,10 @@ flowchart LR
 |---|---|---|---|
 | `equal_weight` | 等权 | 无信息使用 | 基线 |
 | `ic_weight` | 全样本 RankIC 均值 | ⚠️ 轻微样本内偏误（权重看过全样本），仅作基线 | 快速参考 |
-| `ic_weight_rolling` | 滚动 ICIR：w(t) ∝ mean(IC[·<t-h])/std(IC[·<t-h]) | ✅ IC 序列 shift(h)，t 日只用 t-h 前信息 | **推荐** |
+| `ic_weight_rolling` | 滚动 ICIR：w(t) ∝ mean(IC[·<t−h]) / std(IC[·<t−h])，IC 序列 shift(h) 屏蔽前视 | ✅ | **推荐** |
 | `ic_meanvar` | IC 均值-方差凸组合 w ∝ (Σ+λI)⁻¹μ（滚动，同样 shift(h)） | ✅ | **推荐**：分散化收益进权重 |
 | `ortho_ic_weight_rolling` | 分量顺序 Schmidt 正交化 → 残差滚动 ICIR | ✅ | 因子高度相关时消除重复计价 |
 | `linear` / `tree` / `gbdt` | walk-forward 截面回归（训练窗截止 r−h−purge） | ✅ 全部样本外预测 | 非线性交互 |
-| `ic_weight_rolling` | 滚动 ICIR：w(t) ∝ mean(IC[·<t−h]) / std(IC[·<t−h])，IC 序列 shift(h) 屏蔽前视 | ✅ | **推荐** |
-| `ic_meanvar` | IC 均值-方差凸组合 w ∝ (Σ+λI)⁻¹μ（同样 shift(h)） | ✅ | **推荐**：分散化收益进权重 |
-| `ortho_ic_weight_rolling` | 分量顺序 Schmidt 正交化 → 残差滚动 ICIR | ✅ | 因子高度相关时消除重复计价 |
 
 **组合前体检**：`GET /api/factors/correlation?ids=…` 给出池化相关矩阵与去冗余建议
 （|ρ|≥0.8 按 |RankIC| 贪心剔除）；signals/new 页选中因子自动渲染热力图。
@@ -171,6 +168,18 @@ signals/new 页相关性区块联动展示。
   （配置/环境/数据口径），复现排查利器。
 - **回测对比视图**：/backtests 列表勾选多条 → `?ids=` 并排对照（共同交易日对齐、
   指标并排、配置差异摘要、毛净值虚线）。
+- **基准相对指标**：回测指标含 `vs_benchmark` 组 —— 超额年化（算术+几何）、Beta、
+  年化 Alpha（CAPM）、跟踪误差、信息比率、日胜率（对齐日收益计算，公式见
+  `metrics.py` 模块头）；详情页卡片行 + 对比页并排行，基准方差为 0 时如实显示 —。
+- **月度收益热力图**：回测详情页年×月净收益矩阵（ECharts），附盈利月占比与逐年收益
+  —— 收益的时间聚集性一图可见（靠个别月份行情还是均匀赚钱）。
+- **对照实验聚合总览**：/experiments 顶部跨实验统计卡（实验数/累计模型数/NW 显著
+  模型数/平均方向一致性）—— 换因子集后方向是否稳定，过拟合的第一道信号；
+  只做汇总展示，不参与择优。
+- **组合报告导出**：信号详情页组合增益报告可导出 PDF（`/api/signals/{id}/report.pdf`）
+  与 CSV；对照实验结果页「导出 CSV」；研究记录页实验汇总 CSV。
+- **信号滚动 IC 稳定性**：`/api/signals/{id}/rolling-ic` 滚动窗口 RankIC 序列 +
+  正负区间占比，信号列表页相似度矩阵热力图（|ρ|≥0.9 重复计价预警）联动。
 
 - **毛净归因口径**：**分别重跑回测**（费率置零）。目标股数按交易前净值换算，而付过手续费后净值本就不同，故两条序列的**仓位规模必然不同**，`checks.gross_net_attribution` 如实量化差异。**毛净差额 = 费用 + 路径差异，不作纯费用归因**。
 - **停牌判定**：按**原始收盘价与成交量**判定（`volume<=0` 或原始收盘缺失），不使用复权价。
