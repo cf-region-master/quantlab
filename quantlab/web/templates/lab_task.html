@@ -150,18 +150,59 @@ const CANDS = {{ cands_js|tojson }};
 </div>
 
 <script>
-const curveData = {{ (t.metrics_json or {}).get('curve', [])|tojson }};
+// ---- 训练曲线：两种引擎的曲线字段不同（GP: best_ic/mean_ic；AlphaGen: pool_size），
+//      运行中曲线此前不落库 —— 这里先从日志解析兜底，再交给轮询持续刷新 ----
+function qcParseCurveFromLog(text) {
+  const out = [];
+  let m;
+  const rePool = /\[gen\]\s*step=(\d+)\s+pool=(\d+)/g;             // AlphaGen
+  while ((m = rePool.exec(text))) out.push({generation: +m[1], pool_size: +m[2]});
+  if (out.length) return out;
+  const reGp = /\[gen\s+(\d+)\/\d+\]\s+best RankIC\(train\)=([-+0-9.eE]+)\s+mean=([-+0-9.eE]+)/g;
+  while ((m = reGp.exec(text)))
+    out.push({generation: +m[1], best_ic: +m[2], mean_ic: +m[3]});
+  return out;
+}
+function qcCurveSpec(curve) {
+  if (!curve || !curve.length) return null;
+  const it = curve[0];
+  if ('pool_size' in it)
+    return {title: '因子池规模随训练步数（AlphaGen）', yName: '池内因子数',
+            x: c => c.generation,
+            series: [{name: 'pool', type: 'line', data: c => c.pool_size}]};
+  if ('best_ic' in it)
+    return {title: '逐代最优/平均 RankIC（训练段）', yName: 'RankIC',
+            x: c => c.generation,
+            series: [{name: 'best', type: 'line', data: c => c.best_ic},
+                     {name: 'mean', type: 'line', data: c => c.mean_ic}]};
+  return null;
+}
+function qcRenderCurve(curve, chart) {
+  const spec = qcCurveSpec(curve);
+  const opt = {tooltip: {trigger: 'axis'}, legend: {}, grid: {left: 64, right: 24, top: 44, bottom: 44},
+               xAxis: {type: 'category'}, yAxis: {type: 'value', scale: true}};
+  if (!spec) {
+    chart.setOption({...opt, title: {text: '训练曲线（等待第一批数据…）', textStyle: {fontSize: 13}},
+                     xAxis: {type: 'category', data: []}, series: []}, true);
+    return;
+  }
+  chart.setOption({...opt,
+    title: {text: spec.title, textStyle: {fontSize: 13}},
+    yAxis: {type: 'value', scale: true, name: spec.yName},
+    xAxis: {type: 'category', data: curve.map(spec.x)},
+    series: spec.series.map(s => ({...s, data: curve.map(s.data)}))}, true);
+}
+const curveJson = {{ (t.metrics_json or {}).get('curve', [])|tojson }};
+const isRunning = {{ 'true' if t.status in ('RUNNING', 'PENDING') else 'false' }};
 var ch = null;
-if (curveData.length) {
+let curveData = curveJson.length ? curveJson
+             : qcParseCurveFromLog(document.getElementById('log').textContent || '');
+if (curveData.length || isRunning) {
   ch = echarts.init(document.getElementById('curve'));
   window.__qcCharts.push(ch);
-  window._curveChart = ch;   // 轮询增量重绘用的是这个名字；此前初始实例没挂上去
-  ch.setOption({title:{text:'逐代最优/平均 RankIC（训练段）', textStyle:{fontSize:13}},
-    tooltip:{trigger:'axis'}, legend:{},
-    xAxis:{type:'category', data:curveData.map(c=>c.generation)},
-    yAxis:{type:'value', scale:true},
-    series:[{name:'best', type:'line', data:curveData.map(c=>c.best_ic)},
-            {name:'mean', type:'line', data:curveData.map(c=>c.mean_ic)}]});
+  window._curveChart = ch;
+  qcRenderCurve(curveData, ch);      // 无数据（运行初期）时显示"等待第一批数据"
+  window.qcFit && window.qcFit(ch);
 } else {
   document.getElementById('curve').innerHTML =
     '<div class="muted" style="padding:28px; text-align:center;">本次运行未记录训练曲线'
@@ -198,16 +239,12 @@ if (st === 'RUNNING' || st === 'PENDING') {
           document.getElementById('stage').textContent += ' · 剩余约 ' + etaMin + ' 分钟';
         pPrev = prog; tPrev = now;
       }
-      // 曲线增量重绘（服务端已降采样）
-      if (window._curveChart && j.curve) {
-        const c = j.curve;
-        const xKey = c.length && ('generation' in c[0]) ? 'generation' : 'round';
-        window._curveChart.setOption({
-          xAxis:{data:c.map(x=>x[xKey])},
-          series: xKey==='generation'
-            ? [{data:c.map(x=>x.best_ic)},{data:c.map(x=>x.mean_ic)}]
-            : [{data:c.map(x=>x.train_ic)},{data:c.map(x=>x.validation_ic)}]
-        });
+      // 曲线刷新：优先服务端曲线（新任务会流式落库），否则从已收日志解析
+      if (window._curveChart) {
+        const c = (j.curve && j.curve.length)
+          ? j.curve
+          : qcParseCurveFromLog(document.getElementById('log').textContent || '');
+        if (c.length) qcRenderCurve(c, window._curveChart);
       }
       // 终态判断直接用本响应的 status
       if (['SUCCESS','FAILED','CANCELLED'].includes(j.status)) {

@@ -246,7 +246,8 @@ class AlphaGenEngine:
                     eng.result.curve.append({"generation": n, "pool_size": len(pool.entries)})
                     if report:
                         report(progress=min(0.98, 0.02 + 0.96 * n / max(1, p.steps)),
-                               stage="training", log_lines=[msg])
+                               stage="training", log_lines=[msg],
+                               metrics={"curve": list(eng.result.curve)})
                 return True
 
         model = MaskablePPO(

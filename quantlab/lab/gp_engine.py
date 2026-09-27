@@ -436,7 +436,11 @@ class GpEngine:
             self.result.log.append(line)
             if report:
                 report(progress=gen / p.generations, stage="training",
-                       metrics={"best_train_rank_ic": fits[best_i]}, log_lines=[line])
+                       # 曲线随进度流式落库：任务运行中页面即可看到曲线增长
+                       # （此前 curve 只在任务结束时才写入，运行中页面永远是空的）
+                       metrics={"best_train_rank_ic": fits[best_i],
+                                "curve": list(self.result.curve)},
+                       log_lines=[line])
 
             # 登记候选（含验证/测试段 IC，诚实展示）
             for i in order[:5]:
