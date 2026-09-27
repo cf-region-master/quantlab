@@ -110,6 +110,34 @@
 </table>
 <p><button class="btn" type="submit" id="adoptBtn">一键导入因子库</button></p>
 </form>
+<div id="candChart" class="chart" style="height:320px; margin-top:12px;"></div>
+<div class="chart-note">每个候选的三段 RankIC 并排：train（样本内）显著高于 valid/test 时
+是过拟合的直接证据；排序只按 train，本图用于人工核对样本外衰减。</div>
+<script>
+{% set cands_js = [] %}
+{% for c in cands %}{% set _ = cands_js.append({
+      'expression': c.expression, 'size': c.size,
+      'train_ic': c.train_ic, 'valid_ic': c.valid_ic, 'test_ic': c.test_ic}) %}{% endfor %}
+const CANDS = {{ cands_js|tojson }};
+(function(){
+  if (!CANDS.length || !window.echarts) return;
+  const cc = echarts.init(document.getElementById('candChart'));
+  const short = s => (s && s.length > 26 ? s.slice(0, 25) + '…' : (s || ''));
+  const labels = CANDS.map((c, i) => `#${i + 1} ${short(c.expression)}`);
+  cc.setOption({
+    title:{text:'候选三段 RankIC（train / valid / test）', textStyle:{fontSize:13}},
+    tooltip:{trigger:'axis'}, legend:{top:4},
+    grid:{left:60, right:16, top:44, bottom:110},
+    xAxis:{type:'category', data:labels, axisLabel:{rotate:38, fontSize:10, interval:0}},
+    yAxis:{type:'value', name:'RankIC'},
+    series:[
+      {name:'train', type:'bar', maxBarWidth:18, data:CANDS.map(c=>c.train_ic)},
+      {name:'valid', type:'bar', maxBarWidth:18, data:CANDS.map(c=>c.valid_ic)},
+      {name:'test',  type:'bar', maxBarWidth:18, data:CANDS.map(c=>c.test_ic)}]
+  });
+  window.addEventListener('resize', ()=>cc.resize());
+})();
+</script>
 {% else %}
 <p class="muted">暂无候选（任务运行中或无有效表达式）。</p>
 {% endif %}
