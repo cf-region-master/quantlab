@@ -32,7 +32,8 @@
   </form>
 </div>
 
-<h2>历史实验</h2>
+<h2>历史实验 <a class="btn ghost" style="font-size:12px; vertical-align:middle;"
+     href="/api/experiments/summary.csv">导出全部汇总 CSV</a></h2>
 {% for e in experiments %}
 <div class="card" style="margin-bottom:14px;">
   <div class="k">因子 {{ e.factor_ids }} · h={{ e.horizon }} · {{ e.start }} ~ {{ e.end }}

@@ -367,9 +367,12 @@ def page_backtests(request: Request):
     rows = []
     for b in store.list_backtests():
         sig = store.get_signal(b["signal_id"]) or {}
-        m = (b.get("metrics_json") or {}).get("net") or {}
+        mj = b.get("metrics_json") or {}
+        m = mj.get("net") or {}
+        vb = mj.get("vs_benchmark") or {}
         rows.append({**b, "signal_name": sig.get("name", f"#{b['signal_id']}"),
                      "annualized_return": m.get("annualized_return"),
+                     "excess_annual": vb.get("excess_annual"),
                      "sharpe": m.get("annualized_sharpe"),
                      "max_drawdown": m.get("max_drawdown"),
                      "all_pass": (b.get("checks_json") or {}).get("all_pass")})
@@ -1094,6 +1097,46 @@ def experiments_csv(filename: str):
     return PlainTextResponse(csv, media_type="text/csv",
                              headers={"Content-Disposition":
                                       f'attachment; filename="{filename}.csv"'})
+
+
+@app.get("/api/experiments/summary.csv")
+def experiments_summary_csv():
+    """跨全部对照实验的汇总 CSV：每行 = 实验 × 模型，含 NW t 与稳健性元数据。"""
+    from fastapi.responses import PlainTextResponse
+    from io import StringIO
+    import csv as _csv
+    buf = StringIO()
+    w = _csv.writer(buf)
+    w.writerow(["experiment", "created_at", "factor_ids", "horizon",
+                "model", "rank_ic_mean", "t_naive", "t_nw", "n_obs",
+                "n_models", "direction_consistency", "n_sig_nw"])
+    exp_dir = ROOT / "reports" / "combination_experiments"
+    for pth in (sorted(exp_dir.glob("*.json")) if exp_dir.exists() else []):
+        try:
+            d = json.loads(pth.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        rob = d.get("robustness") or {}
+        # 实验文件名含时间戳（cmp_YYYYMMDD_HHMMSS），JSON 内没有 created_at
+        stem = pth.stem
+        created = stem.replace("cmp_", "").replace("_", " ") if stem.startswith("cmp_") else ""
+        for m, v in (d.get("models") or {}).items():
+            if "error" in v:
+                w.writerow([stem, created,
+                            ";".join(map(str, d.get("factor_ids", []))),
+                            d.get("horizon", ""), m, "ERROR"] + [""] * 6)
+                continue
+            w.writerow([stem, created,
+                        ";".join(map(str, d.get("factor_ids", []))),
+                        d.get("horizon", ""), m,
+                        v.get("rank_ic_mean", ""), v.get("t_naive", ""),
+                        v.get("t_nw", "") if v.get("t_nw") is not None else "",
+                        v.get("n_obs", ""),
+                        rob.get("n_models", ""), rob.get("direction_consistency", ""),
+                        rob.get("n_sig_nw", "")])
+    return PlainTextResponse(buf.getvalue(), media_type="text/csv",
+                             headers={"Content-Disposition":
+                                      'attachment; filename="experiments_summary.csv"'})
 
 
 @app.post("/experiments/run")
