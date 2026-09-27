@@ -425,6 +425,7 @@ def page_backtest_detail(request: Request, bid: int):
     chart_json = {k: run.get(k) for k in
                   ("nav", "nav_gross", "benchmark", "turnover", "cost_series") if run.get(k)}
     monthly = _monthly_returns(run.get("nav") or {})
+    yearly = _yearly_table(run, float(cfg.data["risk_free_annual"]))
     runs = store.list_backtests()
     meta = next((b for b in runs if b["id"] == bid), {})
     sig = store.get_signal(meta.get("signal_id")) if meta.get("signal_id") else None
@@ -436,7 +437,56 @@ def page_backtest_detail(request: Request, bid: int):
         "gates": _gate_rows(run.get("checks") or {}),
         "chart_json": chart_json,
         "monthly": monthly,
+        "yearly": yearly,
     })
+
+
+def _yearly_table(run: dict, rf_annual: float = 0.0) -> list[dict]:
+    """分年度指标：年内首尾净值 + 基准（同表内年化），跨年无缝拼接。
+
+    首年基期取曲线首值，以后各年基期为上一年末净值（与月度收益口径一致）；
+    Sharpe 与主指标同口径（rf 为全局假设）；基准年化为区间简单收益。
+    """
+    nav = run.get("nav") or {}
+    bench = run.get("benchmark") or {}
+    idx, vals = nav.get("index") or [], nav.get("values") or []
+    if len(idx) < 2:
+        return []
+    bmap = dict(zip(bench.get("index") or [], bench.get("values") or []))
+    rf_d = rf_annual / 243
+    years: dict[str, dict] = {}
+    prev_v = prev_b = None
+    for d, v in zip(idx, vals):
+        y = str(d)[:4]
+        rec = years.setdefault(y, {"first_v": None, "last_v": float(v), "first_b": None,
+                                   "last_b": None, "peak": -np.inf, "mdd": 0.0,
+                                   "rets": []})
+        if rec["first_v"] is None:
+            rec["first_v"] = prev_v if prev_v is not None else float(v)
+        rec["last_v"] = float(v)
+        rec["peak"] = max(rec["peak"], float(v))
+        rec["mdd"] = max(rec["mdd"], 1 - float(v) / rec["peak"])
+        rec["rets"].append(float(v) / prev_v - 1 if prev_v else np.nan)
+        b = bmap.get(d)
+        if b is not None:
+            if rec["first_b"] is None:
+                rec["first_b"] = prev_b if prev_b is not None else float(b)
+            rec["last_b"] = float(b)
+            prev_b = float(b)
+        prev_v = float(v)
+    A = 243
+    out = []
+    for y in sorted(years):
+        r = years[y]
+        ann = (r["last_v"] / r["first_v"]) ** (A / max(1, len(r["rets"]))) - 1
+        rets = np.asarray([x for x in r["rets"] if x == x], dtype="float64")
+        e = rets - rf_d
+        sharpe = (float(np.sqrt(A) * e.mean() / e.std(ddof=1))
+                  if len(e) > 1 and e.std(ddof=1) > 0 else None)
+        b_ann = (r["last_b"] / r["first_b"] - 1) if (r["first_b"] and r["last_b"]) else None
+        out.append({"year": y, "ann": ann, "sharpe": sharpe, "mdd": r["mdd"],
+                    "bench": b_ann, "excess": (ann - b_ann) if b_ann is not None else None})
+    return out
 
 
 def _monthly_returns(nav: dict) -> dict:

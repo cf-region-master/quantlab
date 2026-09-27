@@ -71,6 +71,24 @@
 <div id="navChart" class="chart" style="height:380px;"></div>
 <div class="chart-note">纵轴为货币金额（初始 {{ '{:,.0f}'.format(meta.initial_cash or 0) }} 元）；回撤为相对历史高点的跌幅（右轴，%）。</div>
 
+{% if yearly %}
+<h2>分年度指标（净）</h2>
+<div class="table-wrap">
+<table class="grid">
+  <tr><th>年份</th><th class="num">年化收益</th><th class="num">超额(vs 基准)</th>
+      <th class="num">基准收益</th><th class="num">Sharpe</th><th class="num">最大回撤</th></tr>
+  {% for y in yearly %}
+  <tr><td class="mono">{{ y.year }}</td>
+      <td class="num"><span class="{{ 'pos' if y.ann >= 0 else 'neg' }}">{{ '%+.2f%%'|format(y.ann*100) }}</span></td>
+      <td class="num">{% if y.excess is not none %}<span class="{{ 'pos' if y.excess >= 0 else 'neg' }}">{{ '%+.2f%%'|format(y.excess*100) }}</span>{% else %}—{% endif %}</td>
+      <td class="num">{% if y.bench is not none %}{{ '%+.2f%%'|format(y.bench*100) }}{% else %}—{% endif %}</td>
+      <td class="num">{{ '%.2f'|format(y.sharpe) if y.sharpe is not none else '—' }}</td>
+      <td class="num neg">-{{ '%.2f%%'|format(y.mdd*100) }}</td></tr>
+  {% endfor %}
+</table>
+</div>
+{% endif %}
+
 {% if monthly and monthly.cells %}
 <h2>月度收益热力图（净）</h2>
 <div id="mmChart" class="chart" style="height:{{ 150 + monthly.years|length * 56 }}px;"></div>
