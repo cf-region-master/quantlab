@@ -1374,6 +1374,15 @@ def api_combination_report_pdf(signal_id: int):
         g = rep["gain"]
         body(f"最强单因子：{g.get('best_single_key')} = {g.get('best_single_ic')}")
         body(f"组合翻正：{'是' if g.get('sign_flip') else '否'} · {g.get('note')}")
+    if rep.get("waterfall"):
+        wf = rep["waterfall"]
+        parts = "，".join(f"{lab} {v:+.5f}" for lab, v in zip(wf["labels"], wf["values"]))
+        body(f"增益瀑布分解（逐因子边际贡献，末项为组合信号自身）：{parts}")
+    if rep.get("significance"):
+        sig_parts = "，".join(
+            f"h={h}: NW t={s['t_nw']:.2f}{s.get('stars') or ''}（{'正' if s.get('positive') else '负'}方向）"
+            for h, s in sorted(rep["significance"].items(), key=lambda kv: int(kv[0])))
+        body(f"多持有期显著性聚合：{sig_parts}")
     body("口径：RankIC = Spearman（并列平均秩）；NW = Newey-West HAC 修正 t；均为描述性统计。", size=8, color=(110, 110, 110))
     out = ROOT / "data" / "store" / f"combination_report_{signal_id}.pdf"
     out.parent.mkdir(parents=True, exist_ok=True)
