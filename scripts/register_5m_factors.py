@@ -119,7 +119,39 @@ def main() -> int:
                         "n_finite": n_finite})
     print(f"[done] {sum(r['created'] for r in results)} 新建 / "
           f"{len(results)} 处理（诊断与分层已随登记自动产出）")
+    _write_summary(cards, results)
     return 0
+
+
+def _write_summary(cards: dict, results: list[dict]) -> None:
+    """把 5m 因子的登记与诊断摘要落盘，供研究报告等下游消费。"""
+    out = ROOT / "reports" / "minute5_summary.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    import json as _json
+    from quantlab.storage.db import Factor, FactorMetric, get_session
+    s = get_session()
+    try:
+        rows = []
+        for r in results:
+            f = s.get(Factor, r["factor_id"])
+            if f is None:
+                continue
+            fname = f.name
+            for m in s.query(FactorMetric).filter_by(factor_id=r["factor_id"]).all():
+                rows.append({"factor_id": f.id, "name": fname,
+                             "key": r["key"], "horizon": m.horizon,
+                             "rank_ic_mean": m.rank_ic_mean, "rank_ic_std": m.rank_ic_std,
+                             "icir": m.icir, "t_stat": m.t_stat,
+                             "n_valid_mean": m.n_valid_mean,
+                             "coverage_mean": m.coverage_mean})
+    finally:
+        s.close()
+    payload = {"cards": {k: cards[k].card_dict() for k in cards},
+               "diagnostics": rows,
+               "note": ("5m bar 面板计算、每日最后一根 bar 取日频快照；"
+                        "诊断与日频因子同口径（RankIC/Spearman，重叠标签为描述性）")}
+    out.write_text(_json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[summary] {out}")
 
 
 if __name__ == "__main__":

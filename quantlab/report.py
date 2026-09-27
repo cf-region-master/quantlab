@@ -39,6 +39,8 @@ def _load(run: Path) -> dict[str, Any]:
     r["experiments"] = {}
     for p in sorted((run / "experiments").glob("*.json")):
         r["experiments"][p.stem] = json.loads(p.read_text(encoding="utf-8"))
+    mp = ROOT / "reports" / "minute5_summary.json"
+    r["minute5"] = json.loads(mp.read_text(encoding="utf-8")) if mp.exists() else None
     return r
 
 
@@ -253,6 +255,23 @@ def build_markdown(data: dict[str, Any], charts: list[Path]) -> str:
             note = v.get("note") or v.get("max_abs_diff") or ""
             L.append(f"- {k}: **{mark}**（{note}）")
     L.append("")
+
+    m5 = data.get("minute5")
+    if m5 and m5.get("diagnostics"):
+        L.append("### 2.4 分钟频因子（5m 扩展 · 日末快照口径）")
+        L.append("")
+        L.append(f"> 口径：{m5.get('note')}，与日频因子同一诊断链路。")
+        L.append("")
+        L.append("| 因子 | h | RankIC 均值 | ICIR | t 统计量 | 平均覆盖 |")
+        L.append("|---|---|---|---|---|---|")
+        for d in m5["diagnostics"]:
+            L.append(f"| {d['name']} | {d['horizon']} | {_num(d['rank_ic_mean'])} "
+                     f"| {_num(d['icir'],3)} | {_num(d['t_stat'],2)} "
+                     f"| {_pct(d['coverage_mean'],0)} |")
+        L.append("")
+        L.append("说明：5m 因子在 bar 面板计算后取每日最后一根 bar 为日频快照，"
+                 "与日频因子在组合/实验/回测中可互换；覆盖仅为日频宇宙与 5m 面板的交集。")
+        L.append("")
 
     # ---- 3 对照与解释 ----
     L.append("## 3 对照与解释")

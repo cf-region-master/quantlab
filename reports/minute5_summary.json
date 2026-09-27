@@ -1,0 +1,153 @@
+{
+  "cards": {
+    "mom48": {
+      "key": "mom48",
+      "name": "5m·1日动量",
+      "hypothesis": "日内动量：日内累计涨幅较强的标的短期延续",
+      "formula": "C(t) / C(t-48) - 1（48根5分钟bar=1个交易日）",
+      "fields": [
+        "close"
+      ],
+      "window": 48,
+      "direction": "分数越高，预期收益越高（日内动量看多）",
+      "missing_policy": "窗口不足或bar缺失记缺失(NaN)，不填零；截面有效样本<10 记缺失",
+      "failure_modes": [
+        "日内均值回复主导时失效",
+        "隔夜跳空截断",
+        "尾盘流动性差时段噪声大"
+      ],
+      "operator": "momentum",
+      "params": {
+        "window": 48
+      },
+      "preprocess": [
+        "winsorize",
+        "zscore"
+      ]
+    },
+    "rev12": {
+      "key": "rev12",
+      "name": "5m·1小时反转",
+      "hypothesis": "分钟级均值回复：近1小时急跌的标的短期反弹",
+      "formula": "-( C(t) / C(t-12) - 1 )（12根bar=1小时）",
+      "fields": [
+        "close"
+      ],
+      "window": 12,
+      "direction": "取负号：分数越高=近期跌幅越大=预期反弹收益越高",
+      "missing_policy": "同 mom48；负号在公式内保证统一方向",
+      "failure_modes": [
+        "趋势/动量主导时段失效",
+        "涨跌停无法反弹",
+        "高波动日阈值效应"
+      ],
+      "operator": "reversal",
+      "params": {
+        "window": 12
+      },
+      "preprocess": [
+        "winsorize",
+        "zscore"
+      ]
+    },
+    "lowvol48": {
+      "key": "lowvol48",
+      "name": "5m·1日低波动",
+      "hypothesis": "分钟级低异质波动：日内波动低者风险调整后更稳",
+      "formula": "-std( r(t-47), ..., r(t) )，r 为 5 分钟收益",
+      "fields": [
+        "close"
+      ],
+      "window": 48,
+      "direction": "取负号：分数越高=近期波动越低=预期收益越高",
+      "missing_policy": "窗口内有效收益数<28.8(48*0.6) 记缺失；不填零",
+      "failure_modes": [
+        "波动 regime 切换",
+        "与日频低波因子高度相关"
+      ],
+      "operator": "lowvol",
+      "params": {
+        "window": 48
+      },
+      "preprocess": [
+        "winsorize",
+        "zscore"
+      ]
+    }
+  },
+  "diagnostics": [
+    {
+      "factor_id": 14,
+      "name": "5m·1日动量",
+      "key": "mom48",
+      "horizon": 5,
+      "rank_ic_mean": -0.001318174961958036,
+      "rank_ic_std": 0.24651043707895734,
+      "icir": -0.00534733935640958,
+      "t_stat": -0.16350971136323184,
+      "n_valid_mean": 40.883384932920535,
+      "coverage_mean": 0.8176676986584107
+    },
+    {
+      "factor_id": 14,
+      "name": "5m·1日动量",
+      "key": "mom48",
+      "horizon": 20,
+      "rank_ic_mean": -0.004015259458732794,
+      "rank_ic_std": 0.24114946349131758,
+      "icir": -0.016650501314000896,
+      "t_stat": -0.509135194616376,
+      "n_valid_mean": 40.85139318885449,
+      "coverage_mean": 0.8170278637770898
+    },
+    {
+      "factor_id": 15,
+      "name": "5m·1小时反转",
+      "key": "rev12",
+      "horizon": 5,
+      "rank_ic_mean": 0.015038230199531275,
+      "rank_ic_std": 0.21479734916280105,
+      "icir": 0.0700112466850481,
+      "t_stat": 2.141932278108111,
+      "n_valid_mean": 40.93395252837977,
+      "coverage_mean": 0.8186790505675954
+    },
+    {
+      "factor_id": 15,
+      "name": "5m·1小时反转",
+      "key": "rev12",
+      "horizon": 20,
+      "rank_ic_mean": -0.0012186086715259455,
+      "rank_ic_std": 0.21173642969821052,
+      "icir": -0.005755309434766787,
+      "t_stat": -0.17607861068784303,
+      "n_valid_mean": 40.90196078431372,
+      "coverage_mean": 0.8180392156862745
+    },
+    {
+      "factor_id": 16,
+      "name": "5m·1日低波动",
+      "key": "lowvol48",
+      "horizon": 5,
+      "rank_ic_mean": 0.02142609683761275,
+      "rank_ic_std": 0.2653266821598991,
+      "icir": 0.08075364551801961,
+      "t_stat": 2.470586485740819,
+      "n_valid_mean": 40.93395252837977,
+      "coverage_mean": 0.8186790505675954
+    },
+    {
+      "factor_id": 16,
+      "name": "5m·1日低波动",
+      "key": "lowvol48",
+      "horizon": 20,
+      "rank_ic_mean": 0.015451449178340765,
+      "rank_ic_std": 0.26121056183246794,
+      "icir": 0.05915323281702073,
+      "t_stat": 1.8097409305565149,
+      "n_valid_mean": 40.90196078431372,
+      "coverage_mean": 0.8180392156862745
+    }
+  ],
+  "note": "5m bar 面板计算、每日最后一根 bar 取日频快照；诊断与日频因子同口径（RankIC/Spearman，重叠标签为描述性）"
+}
