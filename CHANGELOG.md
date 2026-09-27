@@ -218,3 +218,34 @@
     执行 —— 曲线图、一键导入、取消绑定全部失效且 HTTP 巡检测不到；
     因子详情页衰减图在隐藏页撞 body 宽 0 + rAF/定时器限流 —— init 提前到
     同步脚本段根治；空曲线占位文案。
+
+
+## feature/debug-upgrade-innovation · 第七批（2026-09-27）：移除「组合实验」功能（应要求）
+
+用户判定该功能不合格，要求整体删除。本次移除（git 历史可完整找回）：
+
+- 页面 `/experiments`（含跨实验聚合卡）与其全部路由：
+  `POST /experiments/run`、`/experiments/{f}/rerun`、`/experiments/{f}.csv`、
+  `GET /api/experiments/summary.csv`；
+- 导航项「组合实验」、首页研究工具卡、`/runs` 页的组合实验区块与标题；
+- `quantlab/lab/comparison.py`（compare_combinations）、`scripts/compare_combinations.py`；
+- 历史实验产物 `reports/combination_experiments/`（17 个 JSON）；
+- 依赖它的稳健性聚合测试；巡检脚本相应端点。
+
+保留：`factors/combine.py` 的组合模型（等权/IC/滚动 ICIR/逆波动率/均值方差/正交化）
+—— 它们是**信号构建**的组成部分，与本次删除的实验页无关；
+流水线的 E1/E2 对照实验（configs/experiment.yaml → 研究报告 §3）同样保留。
+
+
+## feature/debug-upgrade-innovation · 第八批（2026-09-27）：移除「研究记录」功能（应要求）
+
+在第七批（移除组合实验）之后，用户要求把「研究记录」也一并删除：
+
+- 导航项「研究记录」、首页研究工具卡（股票池卡并入工作流区）；
+- 页面 `/runs`、`/runs/diff` 与接口 `GET /api/runs`、`GET /api/runs/diff`、
+  `GET /api/runs/latest` 全部移除；`runs.html` / `runs_diff.html` 模板删除；
+- 仅被这些路由使用的 `store.list_run_summaries()` 一并删除；
+- 巡检脚本相应端点移除（现为 30 个页面/端点）。
+
+保留：`reports/runs/<id>/manifest.json`（流水线 run 产物，研究报告附录与
+复现核对直接引用）与 `latest_run_dir()`（启动时因子导入仍在用）。

@@ -2,7 +2,7 @@
 
 长任务交互：挖掘任务与批量任务创建后返回 202 + id，前端轮询 /api/lab/tasks/{id}
 与 /api/jobs/{id}；策略回测为同步编排。API 与页面共用同一服务层（store）。
-复现信息（旧 /repro 页）由 reports/runs/<id>/manifest.json 与 /api/runs 提供。
+复现信息完整保留在 reports/runs/<id>/manifest.json（研究报告附录直接引用）。
 """
 from __future__ import annotations
 
@@ -167,12 +167,6 @@ def page_index(request: Request):
         ctx["period"] = [str(md.dates.min().date()), str(md.dates.max().date())]
     except Exception:
         ctx["data"] = None
-    run = store.latest_run_dir()
-    ctx["run"] = run.name if run else None
-    if run and (run / "manifest.json").exists():
-        mf = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
-        ctx["run_env"] = mf.get("environment", {})
-        ctx["run_checks_pass"] = mf.get("checks", {}).get("base_backtest_all_pass")
     return templates.TemplateResponse(request, "index.html", ctx)
 
 
@@ -569,9 +563,9 @@ def page_lab_task(request: Request, task_id: str):
     })
 
 
-# 说明：原「复现包 /repro」「运行记录 /runs」两个页面已按需求从前端下线。
+# 说明：「复现包 /repro」「运行记录 /runs」「研究记录页」均已按需求从前端下线。
 # 复现信息仍完整保留在研究报告（reports/研究报告.md|pdf）与 reports/runs/<id>/manifest.json 中，
-# 机器可读接口保留在 /api/runs（供外部脚本与复核使用）。
+# 复核时直接读文件即可。
 
 
 # ---------------- 表单动作 ----------------
@@ -1052,184 +1046,6 @@ def api_factor_decay(factor_id: int):
     return store.factor_decay(factor_id)
 
 
-@app.get("/experiments", response_class=HTMLResponse)
-def page_experiments(request: Request):
-    """组合方式对照实验：一键跑同因子集 × 全组合模型的对照。"""
-    mk = store.market()
-    s = get_session()
-    try:
-        facs = s.query(Factor).all()
-    finally:
-        s.close()
-    exps = sorted((ROOT / "reports" / "combination_experiments").glob("*.json"),
-                  reverse=True)[:20] if (ROOT / "reports" / "combination_experiments").exists() else []
-    experiments = []
-    for pth in exps:
-        try:
-            d = json.loads(pth.read_text(encoding="utf-8"))
-            d["filename"] = pth.stem
-            experiments.append(d)
-        except Exception:  # noqa: BLE001
-            pass
-    # 跨全部对照实验的聚合统计（稳健性总览）
-    agg = {"n_experiments": len(experiments), "total_models": 0,
-           "total_sig_nw": 0, "avg_consistency": None}
-    all_cons = []
-    for e in experiments:
-        rob = e.get("robustness") or {}
-        agg["total_models"] += rob.get("n_models", 0)
-        agg["total_sig_nw"] += rob.get("n_sig_nw", 0)
-        c = rob.get("direction_consistency")
-        if c is not None:
-            all_cons.append(c)
-    if all_cons:
-        agg["avg_consistency"] = round(sum(all_cons) / len(all_cons), 3)
-    return templates.TemplateResponse(request, "experiments.html", {
-        "factors": facs, "experiments": experiments, "agg": agg,
-        "data_start": str(mk.dates.min().date()), "data_end": str(mk.dates.max().date()),
-    })
-
-
-@app.post("/experiments/{filename}/rerun")
-def action_experiment_rerun(filename: str):
-    """复跑一次对照实验：参数取自已存 JSON（同因子集/区间/h，数据取当前快照）。"""
-    from ..lab.comparison import compare_combinations
-    p_ = ROOT / "reports" / "combination_experiments" / f"{filename}.json"
-    if not p_.exists():
-        raise HTTPException(404)
-    old = json.loads(p_.read_text(encoding="utf-8"))
-    res = compare_combinations([int(i) for i in old["factor_ids"]],
-                               old["start"], old["end"],
-                               horizon=int(old["horizon"]),
-                               include_backtest=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    out_dir = ROOT / "reports" / "combination_experiments"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / f"cmp_{stamp}.json"
-    out.write_text(json.dumps(res, ensure_ascii=False, indent=2, default=str),
-                   encoding="utf-8")
-    return {"saved": out.name, "models": list(res.get("models", {}))}
-
-
-@app.get("/experiments/{filename}.csv")
-def experiments_csv(filename: str):
-    """对照实验结果导出 CSV（filename 不含扩展名，防目录穿越）。"""
-    from fastapi.responses import PlainTextResponse
-    import re as _re
-    if not _re.fullmatch(r"cmp_[0-9A-Za-z_]+", filename):
-        raise HTTPException(400, "非法文件名")
-    p_ = ROOT / "reports" / "combination_experiments" / f"{filename}.json"
-    if not p_.exists():
-        raise HTTPException(404)
-    data = json.loads(p_.read_text(encoding="utf-8"))
-    rob = data.get("robustness") or {}
-    rows = ["model,rank_ic_mean,t_naive,t_nw,n_obs,"
-            "bt_annualized_return,bt_sharpe,bt_max_drawdown,"
-            "bt_annualized_return_weekly,bt_annualized_return_monthly"]
-    meta = [f"# n_models={rob.get('n_models','')},"
-            f"majority_direction={rob.get('majority_direction','')},"
-            f"direction_consistency={rob.get('direction_consistency','')},"
-            f"n_sig_nw={rob.get('n_sig_nw','')}"]
-    rows.extend(meta)
-    for m, v in (data.get("models") or {}).items():
-        if "error" in v:
-            rows.append(f"{m},ERROR")
-            continue
-        def g(k):
-            x = v.get(k)
-            return "" if x is None else f"{x:.6f}"
-        rows.append(",".join([m, g("rank_ic_mean"), g("t_naive"), g("t_nw"),
-                              str(v.get("n_obs", "")), g("bt_annualized_return"),
-                              g("bt_sharpe"), g("bt_max_drawdown"),
-                              g("bt_annualized_return_weekly"),
-                              g("bt_annualized_return_monthly")]))
-    csv = chr(10).join(rows) + chr(10)
-    return PlainTextResponse(csv, media_type="text/csv",
-                             headers={"Content-Disposition":
-                                      f'attachment; filename="{filename}.csv"'})
-
-
-@app.get("/api/experiments/summary.csv")
-def experiments_summary_csv():
-    """跨全部对照实验的汇总 CSV：每行 = 实验 × 模型，含 NW t 与稳健性元数据。"""
-    from fastapi.responses import PlainTextResponse
-    from io import StringIO
-    import csv as _csv
-    buf = StringIO()
-    w = _csv.writer(buf)
-    w.writerow(["experiment", "created_at", "factor_ids", "horizon",
-                "model", "rank_ic_mean", "t_naive", "t_nw", "n_obs",
-                "n_models", "direction_consistency", "n_sig_nw"])
-    exp_dir = ROOT / "reports" / "combination_experiments"
-    for pth in (sorted(exp_dir.glob("*.json")) if exp_dir.exists() else []):
-        try:
-            d = json.loads(pth.read_text(encoding="utf-8"))
-        except Exception:  # noqa: BLE001
-            continue
-        rob = d.get("robustness") or {}
-        # 实验文件名含时间戳（cmp_YYYYMMDD_HHMMSS），JSON 内没有 created_at
-        stem = pth.stem
-        created = stem.replace("cmp_", "").replace("_", " ") if stem.startswith("cmp_") else ""
-        for m, v in (d.get("models") or {}).items():
-            if "error" in v:
-                w.writerow([stem, created,
-                            ";".join(map(str, d.get("factor_ids", []))),
-                            d.get("horizon", ""), m, "ERROR"] + [""] * 6)
-                continue
-            w.writerow([stem, created,
-                        ";".join(map(str, d.get("factor_ids", []))),
-                        d.get("horizon", ""), m,
-                        v.get("rank_ic_mean", ""), v.get("t_naive", ""),
-                        v.get("t_nw", "") if v.get("t_nw") is not None else "",
-                        v.get("n_obs", ""),
-                        rob.get("n_models", ""), rob.get("direction_consistency", ""),
-                        rob.get("n_sig_nw", "")])
-    return PlainTextResponse(buf.getvalue(), media_type="text/csv",
-                             headers={"Content-Disposition":
-                                      'attachment; filename="experiments_summary.csv"'})
-
-
-@app.post("/experiments/run")
-def action_run_experiment(request: Request, factor_ids: str = Form(...),
-                          start_date: str = Form(...), end_date: str = Form(...),
-                          horizon: int = Form(5),
-                          include_backtest: str = Form(""),
-                          rebalances: str = Form("weekly,monthly")):
-    id_list = [int(x) for x in factor_ids.split(",") if x.strip()]
-    if not 2 <= len(id_list) <= 12:
-        raise HTTPException(422, "需选择 2~12 个因子")
-    from ..lab.comparison import compare_combinations
-    freqs = [x.strip() for x in rebalances.split(",") if x.strip()] or ["weekly"]
-    res = compare_combinations(id_list, start_date, end_date, horizon=horizon,
-                               include_backtest=bool(include_backtest),
-                               rebalance_freqs=freqs)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    out_dir = ROOT / "reports" / "combination_experiments"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / f"cmp_{stamp}.json"
-    out.write_text(json.dumps(res, ensure_ascii=False, indent=2, default=str),
-                   encoding="utf-8")
-    return RedirectResponse("/experiments", status_code=303)
-
-
-@app.get("/runs", response_class=HTMLResponse)
-def page_runs(request: Request):
-    """研究记录：流水线 runs 对比 + 组合方式对照实验历史。"""
-    rows = store.list_run_summaries()
-    exp_dir = ROOT / "reports" / "combination_experiments"
-    experiments = []
-    if exp_dir.exists():
-        for pth in sorted(exp_dir.glob("*.json"), reverse=True)[:20]:
-            try:
-                d = json.loads(pth.read_text(encoding="utf-8"))
-                d["filename"] = pth.stem
-                experiments.append(d)
-            except Exception:  # noqa: BLE001
-                pass
-    return templates.TemplateResponse(request, "runs.html",
-                                      {"rows": rows, "experiments": experiments})
-
-
 @app.get("/api/signals/{signal_id}/latest.csv")
 def api_signal_latest_csv(signal_id: int, date: str | None = None):
     """最新交易日信号截面导出 CSV（code,score）—— 策略落地直接可用。"""
@@ -1550,58 +1366,3 @@ def api_signal_similarity(signal_id: int, vs: str = ""):
 def api_signal_combination_report(signal_id: int, horizon: int | None = None):
     """组合增益报告：组合信号 vs 各分量单因子（同口径 RankIC 对照 + 相关性摘要）。"""
     return store.combination_report(signal_id, horizon)
-
-
-@app.get("/api/runs")
-def api_runs():
-    """全部 run 的机器可读摘要（与 /runs 页面同源）。"""
-    return store.list_run_summaries()
-
-
-@app.get("/runs/diff", response_class=HTMLResponse)
-def page_runs_diff(request: Request, a: str, b: str):
-    runs = ROOT / "reports" / "runs"
-    ma_p, mb_p = runs / a / "manifest.json", runs / b / "manifest.json"
-    if not ma_p.exists() or not mb_p.exists():
-        raise HTTPException(404, "run 不存在")
-    ma = json.loads(ma_p.read_text(encoding="utf-8"))
-    mb = json.loads(mb_p.read_text(encoding="utf-8"))
-    diffs = []
-    def walk(prefix, x, y):
-        if isinstance(x, dict) and isinstance(y, dict):
-            for k in sorted(set(x) | set(y)):
-                walk(prefix + [str(k)], x.get(k), y.get(k))
-        elif x != y:
-            diffs.append({"path": ".".join(prefix), "a": x, "b": y})
-    walk([], ma, mb)
-    return templates.TemplateResponse(request, "runs_diff.html",
-                                      {"a": a, "b": b, "diffs": diffs,
-                                       "n": len(diffs)})
-
-
-@app.get("/api/runs/diff")
-def api_runs_diff(a: str, b: str):
-    """两个 run 的 manifest 差异（配置/环境/数据口径），供复现对照。"""
-    runs = ROOT / "reports" / "runs"
-    ma_p, mb_p = runs / a / "manifest.json", runs / b / "manifest.json"
-    if not ma_p.exists() or not mb_p.exists():
-        raise HTTPException(404, "run 不存在")
-    ma, mb = json.loads(ma_p.read_text(encoding="utf-8")), json.loads(mb_p.read_text(encoding="utf-8"))
-    def walk(prefix, x, y, out):
-        if isinstance(x, dict) and isinstance(y, dict):
-            for k in sorted(set(x) | set(y)):
-                walk(prefix + [str(k)], x.get(k), y.get(k), out)
-        elif x != y:
-            out.append({"path": ".".join(prefix), "a": x, "b": y})
-    diffs = []
-    walk([], ma, mb, diffs)
-    return {"a": a, "b": b, "n_diffs": len(diffs), "diffs": diffs[:80]}
-
-
-@app.get("/api/runs/latest")
-def api_latest_run():
-    run = store.latest_run_dir()
-    if run is None:
-        raise HTTPException(404, "尚无运行记录，请先执行 scripts/run_pipeline.py")
-    mf = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
-    return {"run_id": run.name, "manifest": mf}

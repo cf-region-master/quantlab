@@ -133,22 +133,6 @@ def test_ortho_incremental_ic_clone_is_zero():
 
 
 # ---------------- 对照实验跨模型稳健性聚合 ----------------
-def test_robustness_aggregation():
-    """compare_combinations 的稳健性聚合：方向一致比例与显著模型计数。"""
-    from quantlab.storage.db import Factor, get_session
-    from quantlab.lab.comparison import compare_combinations
-    s = get_session()
-    try:
-        ids = [f.id for f in s.query(Factor).limit(3)]
-    finally:
-        s.close()
-    res = compare_combinations(ids, "2023-01-01", "2025-06-30", horizon=5)
-    rb = res.get("robustness")
-    assert rb is not None
-    assert 0 <= rb["direction_consistency"] <= 1
-    assert rb["n_models"] == len(res["models"])
-
-
 def test_inversevol_weights_no_lookahead_and_stability():
     """逆波动率权重：同 ICIR 的无前视纪律 + 归一 + 权重恒正。"""
     # 夹具注意：_panels 的 f0 是"完美 alpha"（IC 方差≈0 → 权重 NaN 退化），

@@ -2,7 +2,7 @@
 
 > 面向量化研究员的网页端量化投研平台：**数据 → 因子 → 信号（策略）→ 目标组合 → 回测/模拟成交 → 评估与解释**。
 > 目标对齐课程 Project 1：**最小但完整、正确、可复现、可扩展**。
-> 四模块 Web 平台：**因子库 / 策略（信号）/ 回测 / 算法实验室**，另含 **股票池行情页、组合对照实验页（/experiments）、研究记录页（/runs）、回测对比视图**。
+> 四模块 Web 平台：**因子库 / 策略（信号）/ 回测 / 算法实验室**，另含 **股票池行情页、回测对比视图**。
 >
 > 两条核心抽象：
 > - **信号 ≠ 回测**。信号是纯权重输出（由因子按模型组合而来），**可像因子一样做 IC/RankIC/分层诊断**；
@@ -47,9 +47,6 @@ python scripts/build_report.py --run v1
 python -m uvicorn quantlab.api.main:app --port 8000
 # 打开 http://127.0.0.1:8000
 
-# 6) 组合方式对照实验（同因子集只改组合模型，RankIC/NW t 对照表落盘）
-python scripts/compare_combinations.py --factors 1,2,3 --start 2023-01-01 --end 2025-06-30
-#    加 --backtest 同时对照各模型的净值表现；--rebalances weekly,monthly 对照调仓频率
 
 # 7) 测试（数据完整性 / 因子正确性 / 回测门禁 / 复现 / 分段防泄漏 / 沙箱 / 组合器）
 python -m pytest tests/ -q
@@ -122,8 +119,6 @@ Newey-West 修正 t（重叠标签纪律）；组合"翻正"时如实提示增�
 **增量 IC 体检**：`/api/factors/incremental-ic?ids=…` —— Schmidt 正交化分解，
 按选择顺序给出各因子的增量 RankIC（排后面的只保留前面解释不掉的信息），
 signals/new 页相关性区块联动展示。
-**一键对照实验**：`python scripts/compare_combinations.py --factors 1,2,3 --start … --end …`
-同因子集只改组合模型，输出 RankIC/普通 t/NW t 对照表并落盘 JSON。
 
 ## 3. 关键口径（正确性）
 
@@ -162,15 +157,9 @@ signals/new 页相关性区块联动展示。
 - **落地导出**：walk-forward 信号的权重矩阵 CSV（`/api/signals/{id}/weights.csv`，
   Σ|w|=1，t 日只用 t−h 前信息）与最新交易日信号截面 CSV
   （`/api/signals/{id}/latest.csv`，code/score/date）—— 直接可用于实盘/复盘系统。
-- **组合对照实验 Web 化**：/experiments 页勾选因子一键跑六模型对照（含
-  IC 逆波动率稳健变体），可勾选
-  「同时对照净值回测」；历史实验卡片含净指标矩阵、「导出 CSV」与「一键复跑」；
-  `--pool` 支持股票池维度对照；`--rebalances` 支持调仓频率矩阵。
 - **最新截面 / 权重导出**：`/api/signals/{id}/latest.csv?date=YYYY-MM-DD`（任一
   交易日信号截面）与 `/api/signals/{id}/weights.csv`（walk-forward 全期权重）——
   策略落地与复盘直接可用。
-- **run 间差异对比**：`/api/runs/diff?a=&b=` 逐键对比两个 run 的 manifest
-  （配置/环境/数据口径），复现排查利器。
 - **回测对比视图**：/backtests 列表勾选多条 → `?ids=` 并排对照（共同交易日对齐、
   指标并排、配置差异摘要、毛净值虚线）。
 - **基准相对指标**：回测指标含 `vs_benchmark` 组 —— 超额年化（算术+几何）、Beta、
@@ -178,11 +167,7 @@ signals/new 页相关性区块联动展示。
   `metrics.py` 模块头）；详情页卡片行 + 对比页并排行，基准方差为 0 时如实显示 —。
 - **月度收益热力图**：回测详情页年×月净收益矩阵（ECharts），附盈利月占比与逐年收益
   —— 收益的时间聚集性一图可见（靠个别月份行情还是均匀赚钱）。
-- **对照实验聚合总览**：/experiments 顶部跨实验统计卡（实验数/累计模型数/NW 显著
-  模型数/平均方向一致性）—— 换因子集后方向是否稳定，过拟合的第一道信号；
-  只做汇总展示，不参与择优。
 - **组合报告导出**：信号详情页组合增益报告可导出 PDF（`/api/signals/{id}/report.pdf`）
-  与 CSV；对照实验结果页「导出 CSV」；研究记录页实验汇总 CSV。
 - **信号滚动 IC 稳定性**：`/api/signals/{id}/rolling-ic` 滚动窗口 RankIC 序列 +
   正负区间占比，信号列表页相似度矩阵热力图（|ρ|≥0.9 重复计价预警）联动。
 
@@ -468,7 +453,7 @@ quantlab/
 ```
 
 > 说明：原「复现包 / 运行记录」两个页面已按需求从**前端**下线；复现信息完整保留在
-> 研究报告与 `reports/runs/<id>/manifest.json`，机器可读接口保留在 `/api/runs`。
+> 研究报告与 `reports/runs/<id>/manifest.json`（逐次运行产物，复核时直接读文件）。
 >
 > `quantlab/` 里引用的 `../alphagen-upstream/`、`../alphagen_5m_code_20260925/`、
 > `../factor-quant-master/`、`../量化因子挖掘平台-产品设计方案.md` 都是**仓库外的参考材料**，
