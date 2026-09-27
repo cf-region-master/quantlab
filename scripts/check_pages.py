@@ -30,6 +30,8 @@ PAGES = [
     "/api/factors/16/decay",
     "/backtests/compare?ids=3&ids=4",
     "/api/signals/9/combination-report.pdf",
+    "/api/factors/1/ic.csv?horizon=5",
+    "/api/signals/9/ic.csv",
 ]
 
 

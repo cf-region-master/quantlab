@@ -213,6 +213,8 @@
 <!-- ==================== IC 时序 / 分布 / 因子值 ==================== -->
 <h2>IC / RankIC 时序</h2>
 <div class="toolbar" style="margin-bottom:10px;">
+  <a class="btn ghost" style="font-size:12px; padding:4px 10px;"
+     href="/api/factors/{{ f.id }}/ic.csv">导出 IC 序列 CSV（默认最大 h）</a>
   <label class="muted">持有期 h</label>
   <select id="hSel">{% for h in diag.keys()|list|sort %}<option value="{{ h }}">h = {{ h }} 交易日</option>{% endfor %}</select>
   <label class="muted">指标</label>

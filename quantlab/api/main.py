@@ -1308,6 +1308,59 @@ def api_signal_weights_csv(signal_id: int):
                                       f'attachment; filename="signal{signal_id}_weights.csv"'})
 
 
+@app.get("/api/factors/{factor_id}/ic.csv")
+def api_factor_ic_csv(factor_id: int, horizon: int = 0):
+    """因子逐日 IC/RankIC 序列导出（报告图表源数据；缺失日记空）。"""
+    from fastapi.responses import PlainTextResponse
+    s = get_session()
+    try:
+        metrics = s.query(FactorMetric).filter_by(factor_id=factor_id).all()
+    finally:
+        s.close()
+    if not metrics:
+        raise HTTPException(404)
+    hs = sorted(m.horizon for m in metrics)
+    h = (horizon if horizon in hs else hs[-1]) if horizon else hs[-1]
+    series = (next(m for m in metrics if m.horizon == h).summary_json or {}).get(
+        str(h), {}).get("ic_series") or {}
+    nl = chr(10)
+    dates = list(series.get("index") or series.get("dates") or [])
+    ric = list(series.get("rank_ic") or [])
+    ic = list(series.get("ic") or [])
+    n = max(len(dates), len(ric), len(ic))
+    csv = f"date,ic,rank_ic  # horizon={h}{nl}"
+    for i in range(n):
+        f = lambda arr: "" if i >= len(arr) or arr[i] is None or not np.isfinite(arr[i]) else f"{arr[i]:.6f}"
+        csv += f"{dates[i] if i < len(dates) else ''},{f(ic)},{f(ric)}{nl}"
+    return PlainTextResponse(csv, media_type="text/csv",
+                             headers={"Content-Disposition":
+                                      f'attachment; filename="factor{factor_id}_ic_h{h}.csv"'})
+
+
+@app.get("/api/signals/{signal_id}/ic.csv")
+def api_signal_ic_csv(signal_id: int):
+    """信号逐日 RankIC 序列导出（组合诊断口径，与因子 ic.csv 同格式）。"""
+    from fastapi.responses import PlainTextResponse
+    from ..factors.combine import daily_ic_series
+    s = get_session()
+    try:
+        orm_sig = s.get(Signal, signal_id)
+    finally:
+        s.close()
+    if orm_sig is None:
+        raise HTTPException(404)
+    h = int(((orm_sig.model_params or {}).get("horizon")) or 5)
+    panel = store.signal_panel(orm_sig, store.market())
+    ics = daily_ic_series(panel, store.market().close_adj.reindex(index=panel.index), h, min_n=10)
+    nl = chr(10)
+    csv = f"date,rank_ic  # horizon={h}{nl}"
+    for d, v in ics.items():
+        csv += f"{pd.Timestamp(d).date()},{'' if v != v else f'{v:.6f}'}{nl}"
+    return PlainTextResponse(csv, media_type="text/csv",
+                             headers={"Content-Disposition":
+                                      f'attachment; filename="signal{signal_id}_ic.csv"'})
+
+
 @app.get("/api/factors/incremental-ic")
 def api_factors_incremental_ic(ids: str = "", horizon: int = 5):
     """按 ids 顺序做 Schmidt 正交化，返回各因子的【增量 RankIC】——

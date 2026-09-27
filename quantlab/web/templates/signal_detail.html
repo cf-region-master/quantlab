@@ -56,7 +56,6 @@ document.addEventListener('DOMContentLoaded', function(){
 <h2>组合增益（组合 vs 最强单因子）
   <a class="btn ghost" style="font-size:12px; padding:4px 10px;" href="/api/signals/{{ sig.id }}/combination-report.csv">导出 CSV</a>
   <a class="btn ghost" style="font-size:12px; padding:4px 10px;" href="/api/signals/{{ sig.id }}/combination-report.pdf" target="_blank">导出 PDF</a>
-  <a class="btn ghost" style="font-size:12px; padding:4px 10px;" href="/api/signals/{{ sig.id }}/combination-report.pdf" target="_blank">导出 PDF</a>
 </h2>
 <div class="kv">
   <div class="k">持有期 h</div><div>{{ gain_report.horizon }} 交易日（RankIC 口径）</div>
@@ -122,7 +121,8 @@ fetch('/api/signals/{{ sig.id }}/similarity').then(r=>r.json()).then(j=>{
 <h2>因子权重随时间变化（walk-forward）</h2>
 <div id="wChart" class="chart" style="height:300px;"></div>
 <div class="muted" style="margin-top:6px;">每列一条堆叠带；权重在日期 t 只使用 t−h 之前的 IC 信息（无前视）。
-  <a href="/api/signals/{{ sig.id }}/weights.csv">导出权重 CSV →</a></div>
+  <a href="/api/signals/{{ sig.id }}/weights.csv">导出权重 CSV →</a> ·
+  <a href="/api/signals/{{ sig.id }}/ic.csv">导出逐日 RankIC CSV →</a></div>
 {% if latest_weights %}
 <table class="grid" style="margin-top:8px;">
   <tr><th>最新权重日期</th>{% for k, v in latest_weights.weights.items() %}<th>因子#{{ k }}</th>{% endfor %}</tr>
