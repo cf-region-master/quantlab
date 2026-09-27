@@ -106,6 +106,8 @@ def compute_metrics(result, rf_annual: float, A: int) -> dict[str, Any]:
             max_w = max(max_w, max(h["weights"].values()))
     buys = sum(1 for t in result.trades if t["side"] == "buy")
     sells = sum(1 for t in result.trades if t["side"] == "sell")
+    risk_summary = dict(getattr(result, "risk_summary", {}) or {})
+    risk_summary["configured"] = bool((result.config or {}).get("risk"))
 
     return {
         "net": net,
@@ -143,4 +145,5 @@ def compute_metrics(result, rf_annual: float, A: int) -> dict[str, Any]:
             "n_trades": len(result.trades),
             "n_events": len(result.events),
         },
+        "risk": risk_summary,
     }

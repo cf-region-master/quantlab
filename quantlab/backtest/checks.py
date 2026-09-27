@@ -127,7 +127,7 @@ def run_checks(result, market, nav_gross: pd.Series | None = None,
     #    （目标集合由信号面板在 market 日历上独立重算，与引擎内部实现互为对照）
     dates = list(market.dates)
     pos = {d: i for i, d in enumerate(dates)}
-    bad_schedule, bad_composition, negative_position = [], [], []
+    bad_schedule, bad_composition, negative_position, bad_risk_exit = [], [], [], []
     log_by_exec = {r["exec_date"]: r for r in (result.rebalance_log or [])}
     for lg in (result.rebalance_log or []):
         fi, ei = pos.get(pd.Timestamp(lg["formation_date"])), pos.get(pd.Timestamp(lg["exec_date"]))
@@ -140,6 +140,11 @@ def run_checks(result, market, nav_gross: pd.Series | None = None,
     for t in result.trades:
         code, q = t["code"], float(t["shares"])
         lg = log_by_exec.get(t["date"])
+        if t.get("kind") == "risk_exit":
+            trigger = pd.Timestamp(t.get("trigger_date")) if t.get("trigger_date") else None
+            trade_day = pd.Timestamp(t["date"])
+            if trigger is None or trigger not in pos or trade_day <= trigger:
+                bad_risk_exit.append(t)
         if t["side"] == "buy":
             if lg is None or code not in set(lg["targets"]):
                 bad_composition.append({"date": t["date"], "code": code, "side": "buy",
@@ -162,17 +167,20 @@ def run_checks(result, market, nav_gross: pd.Series | None = None,
             if pool_mask is not None and fd in pool_mask.index:
                 pool_row = pool_mask.loc[fd]
             expect = sorted(select_top(signal.loc[fd], pool_row, top_n)) if fd in signal.index else []
-            if sorted(lg["targets"]) != expect:
+            engine_targets = lg.get("raw_targets", lg["targets"])
+            if sorted(engine_targets) != expect:
                 mismatch_targets.append({"formation_date": lg["formation_date"],
-                                         "engine": sorted(lg["targets"]), "recomputed": expect})
+                                         "engine": sorted(engine_targets), "recomputed": expect})
     checks["no_lookahead"] = {
         "pass": bool(not bad_schedule and not bad_composition and not negative_position
-                     and not mismatch_targets),
+                     and not bad_risk_exit and not mismatch_targets),
         "n_rebalances": len(result.rebalance_log or []),
         "n_bad_schedule": len(bad_schedule), "bad_schedule_examples": bad_schedule[:3],
         "n_bad_composition": len(bad_composition), "bad_composition_examples": bad_composition[:5],
         "n_negative_position": len(negative_position),
         "negative_position_examples": negative_position[:5],
+        "n_bad_risk_exit": len(bad_risk_exit),
+        "bad_risk_exit_examples": bad_risk_exit[:3],
         "n_target_mismatch": len(mismatch_targets), "target_mismatch_examples": mismatch_targets[:3],
         "note": ("成交日必须为形成日的次一交易日；买入标的须在当日目标集合内（该集合由 signal "
                  "面板独立重算比对，含股票池）；卖出数量不得超过重放持仓（不允许卖空）"),

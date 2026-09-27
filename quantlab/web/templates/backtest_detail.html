@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
+{% set risk_cfg = (res.config or {}).get('risk', {}) if res else {} %}
+{% set risk_metrics = (res.metrics or {}).get('risk', {}) if res else {} %}
 <div class="crumb"><a href="/backtests">回测</a> / bt{{ meta.id }}</div>
 <div class="page-head">
   <div>
@@ -7,7 +9,9 @@
     <p class="lead">
       {{ meta.start_date[:10] }} ~ {{ meta.end_date[:10] }} ·
       {{ meta.pool_note }} · top {{ meta.top_n }} · {{ meta.weighting }} · {{ meta.rebalance_freq }} ·
-      初始资金 {{ '{:,.0f}'.format(meta.initial_cash or 0) }} 元
+      初始资金 {{ '{:,.0f}'.format(meta.initial_cash or 0) }} 元 ·
+      风控{% if risk_cfg.get('stop_loss_pct') or risk_cfg.get('take_profit_pct') or risk_cfg.get('ma_windows') %}
+      已启用{% else %}未启用{% endif %}
     </p>
   </div>
   <div class="toolbar"><a class="btn ghost" href="/backtests/new{% if sig %}?signal_id={{ sig.id }}{% endif %}">再跑一次 →</a></div>
@@ -36,6 +40,40 @@
   <div class="card"><div class="k">交易次数</div><div class="v">{{ res.metrics.portfolio.n_trades }}</div>
     <div class="n">平均持仓 {{ '%.1f'|format(res.metrics.portfolio.avg_holdings) }} · 最大单资产权重 {{ '%.0f%%'|format(res.metrics.portfolio.max_single_weight*100) }}</div></div>
 </div>
+
+{% if risk_cfg.get('stop_loss_pct') or risk_cfg.get('take_profit_pct') or risk_cfg.get('ma_windows') %}
+<h2>风控统计</h2>
+<div class="metrics">
+  <div class="card"><div class="k">触发次数</div><div class="v">{{ risk_metrics.get('n_triggers', 0) }}</div></div>
+  <div class="card"><div class="k">风控卖出</div><div class="v">{{ risk_metrics.get('n_forced_sells', 0) }}</div>
+    <div class="n">顺延 {{ risk_metrics.get('n_deferred_sells', 0) }} 次</div></div>
+  <div class="card"><div class="k">固定止损</div><div class="v">
+    {{ '%.2f%%'|format((risk_cfg.get('stop_loss_pct') or 0)*100) }}</div></div>
+  <div class="card"><div class="k">固定止盈</div><div class="v">
+    {{ '%.2f%%'|format((risk_cfg.get('take_profit_pct') or 0)*100) }}</div></div>
+  <div class="card"><div class="k">均线止损</div><div class="v" style="font-size:18px;">
+    {% if risk_cfg.get('ma_windows') %}{% for w in risk_cfg.get('ma_windows') %}MA{{ w }}{% if not loop.last %} / {% endif %}{% endfor %}{% else %}未启用{% endif %}</div></div>
+  <div class="card"><div class="k">风控卖出金额</div><div class="v" style="font-size:18px;">
+    {{ '{:,.0f}'.format(risk_metrics.get('total_sell_amount', 0)) }}</div></div>
+</div>
+{% set risk_events = (res.events or []) | selectattr('type', 'equalto', 'risk_trigger') | list %}
+{% if risk_events %}
+<h3>风控触发记录（最近 20 条）</h3>
+<div class="table-wrap">
+<table class="grid">
+  <tr><th>形成日</th><th>代码</th><th>触发原因</th><th class="num">收盘价</th>
+      <th class="num">成本基准</th><th>计划卖出日</th></tr>
+  {% for e in risk_events[-20:]|reverse %}
+  <tr><td class="mono">{{ e.date }}</td><td class="mono">{{ e.code }}</td>
+      <td>{{ e.reasons|join(', ') }}</td>
+      <td class="num">{{ '%.3f'|format(e.close) }}</td>
+      <td class="num">{{ '%.3f'|format(e.cost_basis) if e.cost_basis is not none else '—' }}</td>
+      <td class="mono">{{ e.next_open_exit }}</td></tr>
+  {% endfor %}
+</table>
+</div>
+{% endif %}
+{% endif %}
 
 {% set vb = res.metrics.get('vs_benchmark') %}
 {% if vb %}

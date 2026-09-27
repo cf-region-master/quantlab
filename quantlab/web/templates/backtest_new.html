@@ -7,6 +7,7 @@
 {% if not signals %}
 <div class="empty">还没有信号：先到<a href="/signals/new">策略</a>页建一个信号，再回来回测。</div>
 {% else %}
+{% set lr = last.risk or {} %}
 <form class="panel" method="post" action="/backtests/new" id="btForm">
   <div class="grid2">
     <div><label>信号 *</label>
@@ -54,7 +55,35 @@
     <div><label>卖出费率</label><input type="number" name="commission_sell" value="{{ last.get('commission_sell') if last.get('commission_sell') is not none else cost.commission_sell }}" step="0.0001" min="0"></div>
     <div><label>滑点</label><input type="number" name="slippage" value="{{ last.get('slippage') if last.get('slippage') is not none else cost.slippage }}" step="0.0001" min="0"></div>
   </div>
-  <div class="form-hint">默认费率来自 <code>configs/backtest.yaml</code>；<b>尚未分项建模印花税/过户费</b>。</div>
+  <div class="form-hint">已建模佣金和卖出印花税；过户费等仍保持综合费率近似口径。</div>
+  <h2 style="margin:8px 0 0;">策略风控</h2>
+  <div class="form-hint">
+    风控按每日收盘价判断，触发后下一交易日开盘全仓卖出；停牌或无法成交时逐日顺延。
+    止损/止盈比例相对于该股票平均买入成交价。
+  </div>
+  <div class="grid3">
+    <div><label>固定止损（%）</label>
+      <input type="number" name="stop_loss_pct" min="0" max="100" step="0.1"
+             value="{{ ((lr.get('stop_loss_pct') or 0) * 100)|round(4) }}"></div>
+    <div><label>固定止盈（%）</label>
+      <input type="number" name="take_profit_pct" min="0" max="1000" step="0.1"
+             value="{{ ((lr.get('take_profit_pct') or 0) * 100)|round(4) }}"></div>
+    <div><label>风控后冷却（交易日）</label>
+      <input type="number" name="reentry_days" min="0" max="500"
+             value="{{ lr.get('reentry_days', 20) }}"></div>
+  </div>
+  <div>
+    <label>技术指标止损：收盘跌破任一勾选均线就触发</label>
+    {% set selected_mas = lr.get('ma_windows') or [] %}
+    <div class="flex">
+      {% for w in [20, 60, 120, 250] %}
+      <label style="display:flex;align-items:center;gap:6px;">
+        <input type="checkbox" name="ma_windows" value="{{ w }}" {% if w in selected_mas %}checked{% endif %}>
+        MA{{ w }}
+      </label>
+      {% endfor %}
+    </div>
+  </div>
   <div class="flex">
       <div class="kv" style="margin:12px 0;">
     <div class="k">行业中性（可选）</div>

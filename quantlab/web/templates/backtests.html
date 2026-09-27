@@ -22,6 +22,7 @@
 <table class="grid">
   <tr><th>ID</th><th>信号</th><th>区间</th><th>股票池</th>
       <th class="num">top_n</th><th>权重</th><th>调仓</th>
+      <th>风控</th>
       <th class="num">年化(净)</th><th class="num">超额(年化)</th><th class="num">Sharpe</th><th class="num">MDD</th>
       <th class="num">成本(元)</th><th>检查</th><th>时间</th></tr>
   {% for r in rows %}
@@ -32,6 +33,13 @@
     <td class="muted">{{ r.pool_note[:30] }}</td>
     <td class="num">{{ r.top_n }}</td><td class="mono">{{ r.weighting }}</td>
     <td class="mono">{{ r.rebalance_freq }}</td>
+    {% set rk = r.risk_json or {} %}
+    <td class="mono">
+      {% if rk.get('stop_loss_pct') %}SL{{ '%.1f%%'|format(rk.stop_loss_pct*100) }}{% endif %}
+      {% if rk.get('take_profit_pct') %}{% if rk.get('stop_loss_pct') %} · {% endif %}TP{{ '%.1f%%'|format(rk.take_profit_pct*100) }}{% endif %}
+      {% if rk.get('ma_windows') %}{% if rk.get('stop_loss_pct') or rk.get('take_profit_pct') %} · {% endif %}MA{{ rk.ma_windows|join('/') }}{% endif %}
+      {% if not rk.get('stop_loss_pct') and not rk.get('take_profit_pct') and not rk.get('ma_windows') %}—{% endif %}
+    </td>
     <td class="num">{% if r.annualized_return is not none %}<span class="{{ 'pos' if r.annualized_return>=0 else 'neg' }}">{{ '%+.2f%%'|format(r.annualized_return*100) }}</span>{% else %}—{% endif %}</td>
     <td class="num">{% if r.excess_annual is not none %}<span class="{{ 'pos' if r.excess_annual>=0 else 'neg' }}">{{ '%+.2f%%'|format(r.excess_annual*100) }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
     <td class="num">{{ '%.2f'|format(r.sharpe) if r.sharpe is not none else '—' }}</td>

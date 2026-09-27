@@ -14,6 +14,30 @@ def _signal_flat(market, value=1.0):
     return pd.DataFrame(value, index=market.dates, columns=market.codes)
 
 
+def _price_market(open_values, close_values):
+    dates = pd.bdate_range("2024-01-01", periods=len(close_values))
+    codes = ["A"]
+    market = type("RiskMarket", (), {})()
+    market.dates = dates
+    market.codes = codes
+    market.open_adj = pd.DataFrame({"A": open_values}, index=dates)
+    market.close_adj = pd.DataFrame({"A": close_values}, index=dates)
+    market.volume = pd.DataFrame(1_000_000.0, index=dates, columns=codes)
+    market.suspended = market.volume <= 0
+    market.benchmark_close = pd.Series(100.0, index=dates)
+    return market
+
+
+def _risk_cfg(bt_cfg, **risk):
+    return {
+        **bt_cfg,
+        "rebalance": {"freq": "every_h", "h": 2},
+        "portfolio": {"top_n": 1, "weighting": "equal_weight",
+                      "target_exposure": 1.0, "lot_size": 0},
+        "risk": {"reentry_days": 20, **risk},
+    }
+
+
 def test_formation_dates_weekly_monthly():
     idx = pd.bdate_range("2024-01-01", periods=60)  # 12 个完整 ISO 周，跨 3 个月
     weekly = formation_dates(idx, "weekly")
@@ -273,3 +297,30 @@ def test_benchmark_metrics_none_when_missing(tiny_market, bt_cfg):
     assert _benchmark_metrics(res.nav, None, 0.0, 243) is None
     short = pd.Series([1.0, 1.01], index=res.nav.index[:2])
     assert _benchmark_metrics(res.nav, short, 0.0, 243) is None
+
+
+@pytest.mark.parametrize("risk_key,risk_value,close_values,reason", [
+    ("stop_loss_pct", 0.10, [10, 10, 8, 8, 8, 8], "stop_loss"),
+    ("take_profit_pct", 0.10, [10, 10, 12, 12, 12, 12], "take_profit"),
+    ("ma_windows", [2], [10, 10, 9, 9, 9, 9], "close_below_ma2"),
+])
+def test_risk_rules_force_full_exit_next_open(bt_cfg, risk_key, risk_value,
+                                               close_values, reason):
+    # 形成日 idx[1]，idx[2] 开盘买入；idx[2] 收盘触发，idx[3] 开盘全仓卖出。
+    market = _price_market([10, 10, 10, 8, 8, 8], close_values)
+    cfg = _risk_cfg(bt_cfg, **{risk_key: risk_value})
+    sig = _signal_flat(market)
+    res = run_backtest(sig, market, cfg, name="risk")
+
+    buy = next(t for t in res.trades if t["side"] == "buy")
+    risk_sell = next(t for t in res.trades if t.get("kind") == "risk_exit")
+    assert buy["date"] == str(market.dates[2].date())
+    assert risk_sell["date"] == str(market.dates[3].date())
+    assert risk_sell["shares"] == pytest.approx(buy["shares"])
+    assert reason in risk_sell["reasons"]
+    assert res.risk_summary["n_triggers"] == 1
+    assert res.risk_summary["n_forced_sells"] == 1
+
+    checks = run_checks(res, market, signal=sig)
+    assert checks["no_lookahead"]["pass"]
+    assert checks["all_pass"]

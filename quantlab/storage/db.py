@@ -175,6 +175,7 @@ class BacktestRun(Base):
     rebalance_freq = Column(String, default="weekly")
     initial_cash = Column(Float, default=1_000_000.0)
     cost_json = Column(JSON, default=dict)
+    risk_json = Column(JSON, default=dict)                   # 止损/止盈/均线风控配置
     metrics_json = Column(JSON, default=dict)
     checks_json = Column(JSON, default=dict)
     result_path = Column(String, default="")
@@ -286,6 +287,7 @@ class BatchJob(Base):
 _MIGRATIONS: dict[str, dict[str, str]] = {
     "factors": {"hidden": "BOOLEAN DEFAULT 0"},
     "signals": {"algo_task_id": "VARCHAR"},
+    "backtest_runs": {"risk_json": "JSON"},
 }
 
 
