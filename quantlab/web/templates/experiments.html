@@ -1,6 +1,14 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>组合方式对照实验</h1>
+{% if agg %}
+<div class="cards" style="margin:12px 0;">
+  <div class="card"><div class="k">对照实验数</div><div class="v">{{ agg.n_experiments }}</div></div>
+  <div class="card"><div class="k">累计模型数</div><div class="v">{{ agg.total_models }}</div></div>
+  <div class="card"><div class="k">NW 显著模型总数</div><div class="v">{{ agg.total_sig_nw }}</div></div>
+  <div class="card"><div class="k">平均方向一致性</div><div class="v">{{ '%.0f%%'|format(agg.avg_consistency*100) if agg.avg_consistency is not none else '—' }}</div></div>
+</div>
+{% endif %}
 <p class="muted">同一组因子，只改变【组合模型】这一个因素（equal / 全样本 IC / 滚动 ICIR / IC 均值方差 / 正交化），同口径对照 RankIC 与 Newey-West 修正 t。对照纪律：因子集、预处理、区间、标签保持一致。</p>
 
 <div class="card">

@@ -987,8 +987,21 @@ def page_experiments(request: Request):
             experiments.append(d)
         except Exception:  # noqa: BLE001
             pass
+    # 跨全部对照实验的聚合统计（稳健性总览）
+    agg = {"n_experiments": len(experiments), "total_models": 0,
+           "total_sig_nw": 0, "avg_consistency": None}
+    all_cons = []
+    for e in experiments:
+        rob = e.get("robustness") or {}
+        agg["total_models"] += rob.get("n_models", 0)
+        agg["total_sig_nw"] += rob.get("n_sig_nw", 0)
+        c = rob.get("direction_consistency")
+        if c is not None:
+            all_cons.append(c)
+    if all_cons:
+        agg["avg_consistency"] = round(sum(all_cons) / len(all_cons), 3)
     return templates.TemplateResponse(request, "experiments.html", {
-        "factors": facs, "experiments": experiments,
+        "factors": facs, "experiments": experiments, "agg": agg,
         "data_start": str(mk.dates.min().date()), "data_end": str(mk.dates.max().date()),
     })
 
