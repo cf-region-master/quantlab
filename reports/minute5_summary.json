@@ -149,5 +149,26 @@
       "coverage_mean": 0.8180392156862745
     }
   ],
+  "data_quality": {
+    "n_instruments": 300,
+    "n_days": 1666,
+    "coverage_per_instrument": {
+      "min": 0.1104,
+      "p25": 0.9934,
+      "median": 1.0,
+      "p75": 1.0,
+      "max": 1.0
+    },
+    "coverage_per_year": {
+      "2019": 0.8093,
+      "2020": 0.8127,
+      "2021": 0.8133,
+      "2022": 0.8163,
+      "2023": 0.82,
+      "2024": 0.822,
+      "2025": 0.8215
+    },
+    "note": "覆盖率 = 非缺失 bar 占比（close_5m.npy，全字段口径见 meta）"
+  },
   "note": "5m bar 面板计算、每日最后一根 bar 取日频快照；诊断与日频因子同口径（RankIC/Spearman，重叠标签为描述性）"
 }

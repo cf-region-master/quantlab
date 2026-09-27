@@ -123,6 +123,27 @@ def main() -> int:
     return 0
 
 
+def _data_quality() -> dict:
+    """5m 面板数据质量：逐资产/逐年覆盖率（close_5m.npy 的非缺失 bar 占比）。"""
+    arr = np.load(MINUTE_DIR / "close_5m.npy", mmap_mode="r")
+    dates = json.loads((MINUTE_DIR / "close_5m_dates.json").read_text(encoding="utf-8"))
+    finite = np.isfinite(arr)
+    cov = finite.mean(axis=0)
+    q = np.quantile(cov, [0.0, 0.25, 0.5, 0.75, 1.0])
+    per_year = {}
+    for y in sorted({d[:4] for d in dates}):
+        rows = [i for i, d in enumerate(dates) if d.startswith(y)]
+        per_year[y] = round(float(finite[rows].mean()), 4)
+    return {"n_instruments": int(finite.shape[1]),
+            "n_days": len(dates),
+            "coverage_per_instrument": {
+                "min": round(float(q[0]), 4), "p25": round(float(q[1]), 4),
+                "median": round(float(q[2]), 4), "p75": round(float(q[3]), 4),
+                "max": round(float(q[4]), 4)},
+            "coverage_per_year": per_year,
+            "note": "覆盖率 = 非缺失 bar 占比（close_5m.npy，全字段口径见 meta）"}
+
+
 def _write_summary(cards: dict, results: list[dict]) -> None:
     """把 5m 因子的登记与诊断摘要落盘，供研究报告等下游消费。"""
     out = ROOT / "reports" / "minute5_summary.json"
@@ -148,6 +169,7 @@ def _write_summary(cards: dict, results: list[dict]) -> None:
         s.close()
     payload = {"cards": {k: cards[k].card_dict() for k in cards},
                "diagnostics": rows,
+               "data_quality": _data_quality(),
                "note": ("5m bar 面板计算、每日最后一根 bar 取日频快照；"
                         "诊断与日频因子同口径（RankIC/Spearman，重叠标签为描述性）")}
     out.write_text(_json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -269,6 +269,12 @@ def build_markdown(data: dict[str, Any], charts: list[Path]) -> str:
                      f"| {_num(d['icir'],3)} | {_num(d['t_stat'],2)} "
                      f"| {_pct(d['coverage_mean'],0)} |")
         L.append("")
+        dq = m5.get("data_quality") or {}
+        if dq:
+            ci = dq.get("coverage_per_instrument") or {}
+            L.append(f"数据质量：{dq.get('n_instruments')} 资产 × {dq.get('n_days')} 日，"
+                     f"逐资产覆盖率中位 {_pct(ci.get('median'),1)}、最差 {_pct(ci.get('min'),1)}"
+                     "（晚上市/长期停牌所致；详见 reports/minute5_summary.json）。")
         L.append("说明：5m 因子在 bar 面板计算后取每日最后一根 bar 为日频快照，"
                  "与日频因子在组合/实验/回测中可互换；覆盖仅为日频宇宙与 5m 面板的交集。")
         L.append("")
