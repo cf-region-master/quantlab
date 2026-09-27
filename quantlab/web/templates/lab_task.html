@@ -122,6 +122,7 @@ const CANDS = {{ cands_js|tojson }};
 (function(){
   if (!CANDS.length || !window.echarts) return;
   const cc = echarts.init(document.getElementById('candChart'));
+  window.__qcCharts.push(cc);
   const short = s => (s && s.length > 26 ? s.slice(0, 25) + '…' : (s || ''));
   const labels = CANDS.map((c, i) => `#${i + 1} ${short(c.expression)}`);
   cc.setOption({
@@ -153,12 +154,18 @@ const curveData = {{ (t.metrics_json or {}).get('curve', [])|tojson }};
 var ch = null;
 if (curveData.length) {
   ch = echarts.init(document.getElementById('curve'));
+  window.__qcCharts.push(ch);
+  window._curveChart = ch;   // 轮询增量重绘用的是这个名字；此前初始实例没挂上去
   ch.setOption({title:{text:'逐代最优/平均 RankIC（训练段）', textStyle:{fontSize:13}},
     tooltip:{trigger:'axis'}, legend:{},
     xAxis:{type:'category', data:curveData.map(c=>c.generation)},
     yAxis:{type:'value', scale:true},
     series:[{name:'best', type:'line', data:curveData.map(c=>c.best_ic)},
             {name:'mean', type:'line', data:curveData.map(c=>c.mean_ic)}]});
+} else {
+  document.getElementById('curve').innerHTML =
+    '<div class="muted" style="padding:28px; text-align:center;">本次运行未记录训练曲线'
+    + '（快速任务或旧任务可能没有逐代记录）。</div>';
 }
 window.addEventListener('resize', ()=>{ if (ch) ch.resize(); });
 const tid = "{{ t.id }}";
@@ -209,7 +216,6 @@ if (st === 'RUNNING' || st === 'PENDING') {
       }
     } catch (e) { /* 网络抖动：下个周期重试 */ }
   }, 2000);
-  }, 4000);
 }
 const cf = document.getElementById('adoptForm');
 if (cf) cf.addEventListener('submit', async (ev)=>{

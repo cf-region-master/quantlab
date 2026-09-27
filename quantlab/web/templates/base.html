@@ -6,6 +6,17 @@
 <title>{% block title %}QuantLab · 量化因子挖掘平台{% endblock %}</title>
 <link rel="stylesheet" href="/static/style.css">
 <script src="/static/echarts.min.js"></script>
+<script>
+// ECharts 兜底：个别图在容器布局完成前 init（canvas 宽 0 且永不恢复）。
+// load 后对已知注册表的每个实例 resize 一次；各页面把实例塞进
+// window.__qcCharts（数组）即可被覆盖到。
+window.__qcCharts = window.__qcCharts || [];
+window.addEventListener('load', function () {
+  setTimeout(function () {
+    window.__qcCharts.forEach(function (c) { try { c && c.resize && c.resize(); } catch (e) {} });
+  }, 0);
+});
+</script>
 </head>
 <body>
 {% set path = request.url.path if request else '/' %}

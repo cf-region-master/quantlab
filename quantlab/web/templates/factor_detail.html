@@ -2,7 +2,8 @@
 {% block content %}
 {# DIAG / charts 必须在页面顶部声明：下面的 _layered_block.html 是内联脚本，
    会在页面底部的脚本之前执行，声明放底部会导致它读到未定义的 DIAG。 #}
-<script>const DIAG = {{ diag|tojson }}; var charts = [];</script>
+<script>const DIAG = {{ diag|tojson }}; var charts = [];
+charts.push = (function (orig) { return function (c) { window.__qcCharts.push(c); return orig.call(this, c); }; })(charts.push);</script>
 {% set sp = spec %}
 <div class="crumb"><a href="/factors">因子库</a> / {{ f.name }}</div>
 <div class="page-head">
@@ -333,6 +334,7 @@ fetch('/api/factors/{{ f.id }}/decay').then(r=>r.json()).then(rep=>{
   const hs = Object.keys(rep.curve);
   const vals = hs.map(h=>rep.curve[h].rank_ic_mean);
   const dc = echarts.init(document.getElementById('decayChart'));
+  window.__qcCharts.push(dc);
   dc.setOption({title:{text:'平均 RankIC 随持有期衰减（|IC| 减半处 ≈ 半衰期）', textStyle:{fontSize:13}},
     tooltip:{trigger:'axis'},
     xAxis:{type:'category', name:'h', data:hs},
