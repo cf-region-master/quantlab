@@ -217,6 +217,34 @@ def build_markdown(data: dict[str, Any], charts: list[Path]) -> str:
     L.append("")
     L.append("![换手与成本](../assets/turnover.png)")
     L.append("")
+
+    vb = m.get("vs_benchmark")
+    if vb:
+        L.append("**相对基准（沪深300，同日对齐；公式见 metrics.py 模块头）**")
+        L.append("")
+        L.append("| 超额年化(算术) | 超额年化(几何) | Beta | 年化Alpha | 跟踪误差 | 信息比率IR | 日胜率 |")
+        L.append("|---|---|---|---|---|---|---|")
+        L.append(f"| {_pct(vb['excess_annual'])} | {_pct(vb['excess_annual_geo'])} "
+                 f"| {_num(vb['beta'],2)} | {_pct(vb['alpha_annual'])} "
+                 f"| {_pct(vb['tracking_error_annual'],1)} | {_num(vb['information_ratio'],2)} "
+                 f"| {_pct(vb['daily_win_rate'],0)} |")
+        L.append("")
+
+    _nav = base.get("nav") or {}
+    if _nav.get("index") and len(_nav["index"]) > 60:
+        _ml: dict[str, float] = {}
+        for _d, _v in zip(_nav["index"], _nav["values"]):
+            _ml[str(_d)[:7]] = float(_v)
+        _ks = sorted(_ml)
+        _rets = [_ml[k] / (_ml[_ks[i - 1]] if i else float(_nav["values"][0])) - 1.0
+                 for i, k in enumerate(_ks)]
+        _pos = sum(1 for x in _rets if x > 0)
+        _best = max(_rets); _worst = min(_rets)
+        _bi = _rets.index(_best); _wi = _rets.index(_worst)
+        L.append(f"**月度分布**：{len(_ks)} 个月中盈利 {_pos} 个（{_pos/len(_rets)*100:.0f}%）；"
+                 f"最好 {_ks[_bi]}（{_best*100:+.2f}%），最差 {_ks[_wi]}（{_worst*100:+.2f}%）。"
+                 "月度矩阵详见回测详情页热力图。")
+        L.append("")
     L.append("**回测基本检查**（全部自动执行，输出见 manifest.checks）")
     L.append("")
     for k, v in base["checks"].items():
