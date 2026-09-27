@@ -37,6 +37,26 @@
     <div class="n">平均持仓 {{ '%.1f'|format(res.metrics.portfolio.avg_holdings) }} · 最大单资产权重 {{ '%.0f%%'|format(res.metrics.portfolio.max_single_weight*100) }}</div></div>
 </div>
 
+{% set vb = res.metrics.get('vs_benchmark') %}
+{% if vb %}
+<h2>相对基准（沪深300，同日对齐）</h2>
+<div class="metrics">
+  <div class="card accent"><div class="k">超额年化</div><div class="v">
+    {% if vb.excess_annual >= 0 %}<span class="pos">+{{ '%.2f%%'|format(vb.excess_annual*100) }}</span>
+    {% else %}<span class="neg">{{ '%.2f%%'|format(vb.excess_annual*100) }}</span>{% endif %}
+    <div class="n">基准年化 {{ '%+.2f%%'|format(vb.benchmark_annual*100) }} · 几何口径 {{ '%+.2f%%'|format(vb.excess_annual_geo*100) }}</div></div></div>
+  <div class="card"><div class="k">Beta</div><div class="v">{{ '%.2f'|format(vb.beta) if vb.beta is not none and vb.beta == vb.beta else '—' }}</div></div>
+  <div class="card"><div class="k">年化 Alpha</div><div class="v">
+    {% if vb.alpha_annual == vb.alpha_annual %}<span class="{{ 'pos' if vb.alpha_annual >= 0 else 'neg' }}">{{ '%+.2f%%'|format(vb.alpha_annual*100) }}</span>
+    {% else %}—{% endif %}</div>
+    <div class="n">CAPM 口径（rf 同全局假设）</div></div>
+  <div class="card"><div class="k">信息比率 IR</div><div class="v">{{ '%.2f'|format(vb.information_ratio) if vb.information_ratio == vb.information_ratio else '—' }}</div>
+    <div class="n">跟踪误差 {{ '%.1f%%'|format(vb.tracking_error_annual*100) }}</div></div>
+  <div class="card"><div class="k">日胜率(vs 基准)</div><div class="v">{{ '%.0f%%'|format(vb.daily_win_rate*100) }}</div>
+    <div class="n">{{ vb.n_days }} 个交易日</div></div>
+</div>
+{% endif %}
+
 {% if gn and gn.convention %}
 <p class="lead" style="margin-top:10px;">
   <b>毛净归因口径：{{ gn.convention }}</b>

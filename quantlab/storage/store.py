@@ -2062,14 +2062,18 @@ def compare_backtests_multi(ids: list[int]) -> dict:
                                           index=pd.to_datetime(r["nav"]["index"]))
     joined = pd.concat(series, axis=1, join="inner").dropna()
 
-    # 指标并排：每行一个指标，各列一条回测
+    # 指标并排：每行一个指标，各列一条回测（含基准相对指标；旧工件无则显示 —）
     metric_keys = ("cumulative_return", "annualized_return", "annualized_vol",
                    "annualized_sharpe", "max_drawdown")
-    metrics_rows = []
-    for k in metric_keys:
-        metrics_rows.append({"metric": k,
-                             **{f"R{i + 1}": ((r.get("metrics") or {}).get("net", {}) or {}).get(k)
-                                for i, r in enumerate(runs)}})
+    all_keys = list(metric_keys) + [f"vs_benchmark.{k}" for k in
+                                    ("excess_annual", "beta", "information_ratio",
+                                     "tracking_error_annual")]
+
+    def _cell(r: dict, key: str):
+        m = r.get("metrics") or {}
+        if key.startswith("vs_benchmark."):
+            return (m.get("vs_benchmark") or {}).get(key.split(".", 1)[1])
+        return (m.get("net") or {}).get(key)
 
     # 配置差异：与第一条对照，任一键不同即列出
     diff_rows = []
@@ -2107,9 +2111,8 @@ def compare_backtests_multi(ids: list[int]) -> dict:
                                       for v in joined[name].tolist()]
                                for name in joined.columns}},
         "n_common_days": int(len(joined)),
-        "metrics_keys": list(metric_keys),
-        "metrics_table": {k: [{k: ((r.get("metrics") or {}).get("net", {}) or {}).get(k)}
-                              for r in runs] for k in metric_keys},
+        "metrics_keys": all_keys,
+        "metrics_table": {k: [{k: _cell(r, k)} for r in runs] for k in all_keys},
         "config_diff": diff_rows,
     }
 

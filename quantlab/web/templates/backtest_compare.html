@@ -34,7 +34,7 @@
   <tr><th>节</th><th>键</th>{% for r in runs %}<th>{{ r.slot }}</th>{% endfor %}</tr>
   {% for d in config_diff %}
   <tr><td>{{ d.section }}</td><td>{{ d.key }}</td>
-      {% for v in d.values %}<td class="mono">{{ v }}</td>{% endfor %}</tr>
+      {% for v in d['values'] %}<td class="mono">{{ v }}</td>{% endfor %}</tr>
   {% endfor %}
 </table>
 {% else %}

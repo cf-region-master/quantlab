@@ -228,3 +228,48 @@ def test_vol_target_reduces_realized_vol(tiny_market, bt_cfg):
     assert vol_vt < vol_plain * 0.9               # 压低幅度显著
     # 仓位缩放留痕
     assert vt.config["portfolio"]["vol_target"] == 0.10
+
+
+def test_benchmark_metrics_math(tiny_market, bt_cfg):
+    """基准相对指标：对构造序列验证 Beta/超额/IR 的闭式性质。"""
+    from quantlab.backtest.metrics import _benchmark_metrics
+
+    sig = _signal_flat(tiny_market)
+    res = run_backtest(sig, tiny_market, bt_cfg, name="t")
+    idx = res.nav.index
+    t = np.arange(len(idx))
+    # 基准：确定性变动的日收益（非常数 → 方差 > 0，Beta 可估）
+    rb = 0.001 * (1.0 + 0.5 * np.sin(t / 4.0))
+    bench = pd.Series(np.cumprod(1.0 + rb), index=idx)
+
+    # 恒定收益基准（方差 0）→ Beta 无定义（NaN）
+    const_bench = pd.Series(np.cumprod(np.full(len(idx), 1.001)), index=idx)
+    m0 = _benchmark_metrics(res.nav, const_bench, 0.0, 243)
+    assert not np.isfinite(m0["beta"])
+
+    # 策略与基准完全相同：Beta=1、超额 0、日胜率 0（相等不算赢）、TE=0、IR 无定义
+    m1 = _benchmark_metrics(bench, bench, 0.0, 243)
+    assert m1["beta"] == pytest.approx(1.0, rel=1e-9)
+    assert m1["excess_annual"] == pytest.approx(0.0, abs=1e-9)
+    assert m1["daily_win_rate"] == pytest.approx(0.0)
+    assert m1["tracking_error_annual"] == pytest.approx(0.0, abs=1e-12)
+    assert not np.isfinite(m1["information_ratio"])
+
+    # 策略收益 = 基准收益 + 确定性小额活跃收益（均值>0 且非常数）→ IR>0、TE>0
+    rp = rb + 0.0002 + 0.0003 * np.sin(t / 2.0)
+    strat = pd.Series(np.cumprod(1.0 + rp), index=idx)
+    m2 = _benchmark_metrics(strat, bench, 0.0, 243)
+    assert np.isfinite(m2["beta"]) and m2["beta"] > 0
+    assert m2["information_ratio"] > 0
+    assert m2["excess_annual"] > 0
+    assert m2["tracking_error_annual"] > 0
+
+
+def test_benchmark_metrics_none_when_missing(tiny_market, bt_cfg):
+    from quantlab.backtest.metrics import _benchmark_metrics
+
+    sig = _signal_flat(tiny_market)
+    res = run_backtest(sig, tiny_market, bt_cfg, name="t")
+    assert _benchmark_metrics(res.nav, None, 0.0, 243) is None
+    short = pd.Series([1.0, 1.01], index=res.nav.index[:2])
+    assert _benchmark_metrics(res.nav, short, 0.0, 243) is None
