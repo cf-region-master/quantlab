@@ -25,6 +25,11 @@ PAGES = [
     "/api/signals/1/similarity",
     "/api/signals/1/combination-report.csv",
     "/api/factors/decay-compare?ids=1,2,3",
+    "/api/signals/1/rolling-ic",
+    "/api/experiments/summary.csv",
+    "/api/factors/16/decay",
+    "/backtests/compare?ids=3&ids=4",
+    "/api/signals/9/combination-report.pdf",
 ]
 
 

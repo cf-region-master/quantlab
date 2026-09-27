@@ -33,6 +33,9 @@ python scripts/fetch_data_tushare.py --universe pit --start 20200102 --end 20260
 python scripts/fetch_daily_basic.py  --start 20200102 --end 20260925
 #    小样本模式（沪深300 步长抽样 50 只，秒级）：--universe sample
 #    备用 akshare/sina 抓取器：python scripts/fetch_data.py
+#    5 分钟因子（可选）：面板构建后把 factors_5m.yaml 的卡片登记进因子库
+#    （日末快照口径，与日频因子同一诊断/组合/回测链路）
+python scripts/register_5m_factors.py
 
 # 3) 一键研究流水线：清洗→质量报告→三因子诊断→回测→对照实验→复现 manifest
 python scripts/run_pipeline.py --run-id v1
