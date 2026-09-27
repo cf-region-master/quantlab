@@ -162,7 +162,8 @@ signals/new 页相关性区块联动展示。
 - **落地导出**：walk-forward 信号的权重矩阵 CSV（`/api/signals/{id}/weights.csv`，
   Σ|w|=1，t 日只用 t−h 前信息）与最新交易日信号截面 CSV
   （`/api/signals/{id}/latest.csv`，code/score/date）—— 直接可用于实盘/复盘系统。
-- **组合对照实验 Web 化**：/experiments 页勾选因子一键跑五模型对照，可勾选
+- **组合对照实验 Web 化**：/experiments 页勾选因子一键跑六模型对照（含
+  IC 逆波动率稳健变体），可勾选
   「同时对照净值回测」；历史实验卡片含净指标矩阵、「导出 CSV」与「一键复跑」；
   `--pool` 支持股票池维度对照；`--rebalances` 支持调仓频率矩阵。
 - **最新截面 / 权重导出**：`/api/signals/{id}/latest.csv?date=YYYY-MM-DD`（任一

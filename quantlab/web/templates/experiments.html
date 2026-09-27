@@ -9,7 +9,7 @@
   <div class="card"><div class="k">平均方向一致性</div><div class="v">{{ '%.0f%%'|format(agg.avg_consistency*100) if agg.avg_consistency is not none else '—' }}</div></div>
 </div>
 {% endif %}
-<p class="muted">同一组因子，只改变【组合模型】这一个因素（equal / 全样本 IC / 滚动 ICIR / IC 均值方差 / 正交化），同口径对照 RankIC 与 Newey-West 修正 t。对照纪律：因子集、预处理、区间、标签保持一致。</p>
+<p class="muted">同一组因子，只改变【组合模型】这一个因素（equal / 全样本 IC / 滚动 ICIR / IC 逆波动率 / IC 均值方差 / 正交化），同口径对照 RankIC 与 Newey-West 修正 t。对照纪律：因子集、预处理、区间、标签保持一致。</p>
 
 <div class="card">
   <form method="post" action="/experiments/run" style="display:grid; gap:10px;">
