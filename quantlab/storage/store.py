@@ -1369,6 +1369,12 @@ def signal_rebalance_hint(signal_id: int) -> dict:
         comp_ids = [int(c["factor_id"]) for c in (sig.components or [])]
     finally:
         s.close()
+    # 因子名一起带出：只给 half_life 数字用户无从对号入座
+    s2 = get_session()
+    try:
+        names = {f.id: f.name for f in s2.query(Factor).filter(Factor.id.in_(comp_ids)).all()}
+    finally:
+        s2.close()
     rows, min_hl = [], None
     for fid in comp_ids:
         try:
@@ -1376,7 +1382,7 @@ def signal_rebalance_hint(signal_id: int) -> dict:
         except Exception:  # noqa: BLE001 —— 单分量失败不阻塞
             continue
         hl = rep.get("half_life")
-        rows.append({"factor_id": fid,
+        rows.append({"factor_id": fid, "name": names.get(fid, f"#{fid}"),
                      "half_life": hl,
                      "best_h": rep.get("best_h"),
                      "hint": rep.get("rebalance_hint")})

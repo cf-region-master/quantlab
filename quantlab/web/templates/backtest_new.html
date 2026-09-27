@@ -99,7 +99,8 @@ document.addEventListener('DOMContentLoaded', function(){
       const j = await r.json();
       document.getElementById('hlHint').innerHTML = j.suggestion +
         (j.components && j.components.length ? '<br>' + j.components.map(c=>
-          '· ' + (c.half_life != null ? ('半衰期 ' + c.half_life + ' 日') : '未见减半')).join('<br>') : '');
+          '· ' + (c.name || ('#' + c.factor_id)) + '：' +
+          (c.half_life != null ? ('半衰期 ' + c.half_life + ' 日') : '未见减半')).join('<br>') : '');
     } catch(e) {}
   };
   sel.addEventListener('change', upd); upd();
