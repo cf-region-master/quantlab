@@ -77,6 +77,10 @@ def build_5m_fields(csv_path: Path, out_dir: Path,
         np.save(out_dir / f"{f}_5m.npy", panel)
         built = sorted(set(built) | {f})
     (out_dir / "close_5m_dates.json").write_text(json.dumps(dates), encoding="utf-8")
+    # 资产代码表必须落盘：npy 列只有位置索引，没有这份表面板无法对回任何宇宙
+    # （历史上漏了这一步，构建完只能靠重扫原始 CSV 才能找回代码顺序）
+    (out_dir / "close_5m_codes.json").write_text(json.dumps(insts, ensure_ascii=False),
+                                                 encoding="utf-8")
     meta = {
         "built_at": datetime.now(timezone.utc).isoformat(),
         "source_csv": str(csv_path),
