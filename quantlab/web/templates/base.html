@@ -11,9 +11,24 @@
 // load 后对已知注册表的每个实例 resize 一次；各页面把实例塞进
 // window.__qcCharts（数组）即可被覆盖到。
 window.__qcCharts = window.__qcCharts || [];
+// 实测：异步回调里 init 的图可能撞上 body 宽度还是 0 的时刻（load 前后都可能），
+// 一次性 resize 救不回来 —— 逐帧等到容器有宽度再 resize，最多约 2 秒。
+window.qcFit = function (c) {
+  if (!c || !c.resize) return;
+  var tries = 0;
+  (function go() {
+    try {
+      if (c.isDisposed()) return;
+      var d = c.getDom();
+      if (d && d.clientWidth > 0) { c.resize(); return; }
+    } catch (e) {}
+    // 注意：隐藏标签页里 requestAnimationFrame 会被暂停，必须用 setTimeout
+    if (++tries < 100) setTimeout(go, 120);
+  })();
+};
 window.addEventListener('load', function () {
   setTimeout(function () {
-    window.__qcCharts.forEach(function (c) { try { c && c.resize && c.resize(); } catch (e) {} });
+    window.__qcCharts.forEach(function (c) { try { window.qcFit(c); } catch (e) {} });
   }, 0);
 });
 </script>

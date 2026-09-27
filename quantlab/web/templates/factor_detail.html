@@ -279,6 +279,12 @@ const LAYER_COLORS = ['#1a5fb4','#3d8bd4','#94a3b8','#e08a3c','#d92b2b','#8b1a1a
 /* ---------- IC 时序 ---------- */
 const icChart = echarts.init(document.getElementById('icChart'));
 charts.push(icChart);
+// decay / value 两图的数据异步到达，但 init 必须同步做：
+// 实测回调里 init 会撞上 body 宽 0 的时刻（IAB 隐藏页 rAF/定时器还可能被限流），
+// 同步 init 的图从未踩空
+const decayC = echarts.init(document.getElementById('decayChart'));
+const valC = echarts.init(document.getElementById('valChart'));
+charts.push(decayC); charts.push(valC);
 function drawIC(){
   const h = document.getElementById('hSel').value;
   const m = document.getElementById('mSel').value;
@@ -333,13 +339,14 @@ function drawIC(){
 fetch('/api/factors/{{ f.id }}/decay').then(r=>r.json()).then(rep=>{
   const hs = Object.keys(rep.curve);
   const vals = hs.map(h=>rep.curve[h].rank_ic_mean);
-  const dc = echarts.init(document.getElementById('decayChart'));
-  window.__qcCharts.push(dc);
+  const dc = decayC;
   dc.setOption({title:{text:'平均 RankIC 随持有期衰减（|IC| 减半处 ≈ 半衰期）', textStyle:{fontSize:13}},
     tooltip:{trigger:'axis'},
     xAxis:{type:'category', name:'h', data:hs},
     yAxis:{type:'value', scale:true},
     series:[{type:'line', symbol:'circle', symbolSize:7, data:vals.map(v=>v==null?null:Math.round(v*10000)/10000)}]});
+  // 异步回调里 init 的图可能读到 0 宽容器（load 兜底跑不到它），setOption 后立即 resize
+  window.qcFit && window.qcFit(dc);  // 兜底：init 后容器尺寸若有变化再校正
   const unit = rep.frequency==='5m' ? 'bar' : '个交易日';
   document.getElementById('decayHint').textContent = rep.half_life
     ? `半衰期 ≈ ${rep.half_life} ${unit} · 最优持有期 h=${rep.best_h} · 调仓频率不宜快于半衰期`
@@ -350,7 +357,7 @@ fetch('/api/factors/{{ f.id }}/series').then(r=>{
   if (!r.ok) throw new Error('HTTP '+r.status);
   return r.json();
 }).then(d=>{
-  const vc = echarts.init(document.getElementById('valChart')); charts.push(vc);
+  const vc = valC;
   const series = Object.entries(d.values_sample.series).slice(0,5).map(([name, vals])=>({
     name, type:'line', showSymbol:false, connectNulls:false, data:vals.map(num4)}));
   vc.setOption({
@@ -359,6 +366,7 @@ fetch('/api/factors/{{ f.id }}/series').then(r=>{
     xAxis:{type:'category', data:d.values_sample.index, boundaryGap:false},
     yAxis:{type:'value', scale:true, name:'因子原始值', nameTextStyle:{fontSize:11}},
     dataZoom:[{type:'inside'},{type:'slider', height:16, bottom:8}], series});
+  window.qcFit && window.qcFit(vc);
 }).catch(e=>{
   const el = document.getElementById('valChart');
   if (el) el.innerHTML = '<div class="muted" style="padding:14px;">因子值样本加载失败：' + e.message + '</div>';
