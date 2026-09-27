@@ -1438,9 +1438,12 @@ def api_combination_report_pdf(signal_id: int):
     pdf.add_page()
 
     def body(text, size=9.5, color=(20, 20, 20), lh=5):
+        # 左对齐 + 行内记号剥离（同 build_report：justify 会把中英混排行撑出大空白）
+        for tok in ("**", "`", "*"):
+            text = text.replace(tok, "")
         pdf.set_font("cjk", "", size)
         pdf.set_text_color(*color)
-        pdf.multi_cell(0, lh, text.replace("**", ""), new_x="LMARGIN", new_y="NEXT")
+        pdf.multi_cell(0, lh, text, align="L", new_x="LMARGIN", new_y="NEXT")
         pdf.set_text_color(20)
 
     pdf.set_font("cjk", "", 15)
@@ -1449,8 +1452,10 @@ def api_combination_report_pdf(signal_id: int):
     pdf.ln(2)
     body(f"持有期 h = {rep['horizon']} 交易日（RankIC 口径，NW = Newey-West 修正）")
     pdf.ln(1)
-    body(f"组合信号 RankIC = {rep['combined_rank_ic']}"
-         + (f"（NW 修正 t = {rep['combined_rank_ic_t_nw']}）"
+    _cic = rep.get("combined_rank_ic")
+    body("组合信号 RankIC = "
+         + (f"{_cic:.4f}" if isinstance(_cic, (int, float)) else str(_cic))
+         + (f"（NW 修正 t = {rep['combined_rank_ic_t_nw']:.2f}）"
             if rep.get("combined_rank_ic_t_nw") is not None else ""))
     pdf.ln(2)
     pdf.set_font("cjk", "", 10)
@@ -1475,7 +1480,19 @@ def api_combination_report_pdf(signal_id: int):
         body(f"分量相关性：min {corr['min']} · max {corr['max']} · 平均|ρ| {corr['mean_abs']}")
     if rep.get("gain"):
         g = rep["gain"]
-        body(f"最强单因子：{g.get('best_single_key')} = {g.get('best_single_ic')}")
+        _key = g.get("best_single_key")
+        _best_label = str(_key)
+        if str(_key).isdigit():
+            from quantlab.storage.db import Factor as _F, get_session as _gs
+            _s = _gs()
+            try:
+                _f = _s.get(_F, int(_key))
+                _best_label = f"{_f.name}（#{_f.id}）" if _f else _best_label
+            finally:
+                _s.close()
+        _bic = g.get("best_single_ic")
+        body(f"最强单因子：{_best_label} = "
+             + (f"{_bic:.4f}" if isinstance(_bic, (int, float)) else str(_bic)))
         body(f"组合翻正：{'是' if g.get('sign_flip') else '否'} · {g.get('note')}")
     if rep.get("waterfall"):
         wf = rep["waterfall"]
