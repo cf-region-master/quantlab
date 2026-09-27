@@ -60,8 +60,9 @@
           {% set ba = v.get('bt_annualized_return') %}
           {% set bw = v.get('bt_annualized_return_weekly') %}
           {% set bm = v.get('bt_annualized_return_monthly') %}
-          {% if ba is not none %}年化 {{ '%+.2f%%'|format(ba*100) }} · Sharpe {{ '%.2f'|format(v.get('bt_sharpe')) }}
-          {% elif bw is not none %}周 {{ '%+.2f%%'|format(bw*100) }}{% endif %}
+          {% set ew = v.get('bt_excess_annual_weekly') %}
+          {% if ba is not none %}年化 {{ '%+.2f%%'|format(ba*100) }} · Sharpe {{ '%.2f'|format(v.get('bt_sharpe')) }}{% if ew is not none %} · 超额 {{ '%+.2f%%'|format(ew*100) }}{% endif %}
+          {% elif bw is not none %}周 {{ '%+.2f%%'|format(bw*100) }}{% if ew is not none %} · 超额 {{ '%+.2f%%'|format(ew*100) }}{% endif %}{% endif %}
           {% if bm is not none %}· 月 {{ '%+.2f%%'|format(bm*100) }}{% endif %}
         </td>{% endif %}</tr>
     {% endfor %}

@@ -139,8 +139,11 @@ def _quick_backtest(panel: pd.DataFrame, mk, start: str, end: str,
     res.metrics = compute_metrics(res, float(cfg.data["risk_free_annual"]),
                                   int(cfg.data["trading_days_per_year"]))
     net = res.metrics.get("net", {}) if res.metrics else {}
+    vb = res.metrics.get("vs_benchmark") or {}
     return {"annualized_return": net.get("annualized_return"),
             "sharpe": net.get("annualized_sharpe"),
             "max_drawdown": net.get("max_drawdown"),
+            "excess_annual": vb.get("excess_annual"),
+            "information_ratio": vb.get("information_ratio"),
             "total_cost": float(res.cost_series.sum()) if len(res.cost_series) else 0.0,
             "turnover_sum": float(res.turnover.sum()) if len(res.turnover) else 0.0}
