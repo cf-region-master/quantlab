@@ -1607,13 +1607,13 @@ def combination_report(signal_id: int, horizon: int | None = None) -> dict:
 
 
 def _rolling_weighted_panel(sig, market, start=None, end=None) -> pd.DataFrame:
-    """ic_weight_rolling / ic_meanvar：walk-forward 因子权重 + 逐行加权。
+    """ic_weight_rolling / ic_meanvar / ic_inversevol_rolling：walk-forward 因子权重 + 逐行加权。
 
     各因子先按【自己的 spec + 池】得到 zscore 面板（与 weighted 路径同源），
     权重由 factors/combine 的滚动 ICIR / IC 均值-方差闭式解给出。
     """
     from ..factors.combine import (apply_weights, rolling_ic_meanvar_weights,
-                                   rolling_icir_weights)
+                                   rolling_icir_weights, rolling_inversevol_weights)
 
     mp = dict(sig.model_params or {})
     h = max(1, int(mp.get("label_horizon", 5)))
@@ -1642,7 +1642,10 @@ def _rolling_weighted_panel(sig, market, start=None, end=None) -> pd.DataFrame:
         # 的是"增量信息"的贡献，而不是重复计价的相关信息。
         from ..factors.combine import orthogonalize
         panels, order = orthogonalize(panels, list(panels.keys()))  # 分量顺序=信息优先级
-    if sig.model_type in ("ic_meanvar", "ortho_ic_weight_rolling"):
+    if sig.model_type == "ic_inversevol_rolling":
+        wmat = rolling_inversevol_weights(panels, market.close_adj, h=h, window=window,
+                                          min_periods=min_periods)
+    elif sig.model_type in ("ic_meanvar", "ortho_ic_weight_rolling"):
         wmat = rolling_ic_meanvar_weights(panels, market.close_adj, h=h, window=window,
                                           min_periods=min_periods, ridge=ridge)
     else:
@@ -1676,6 +1679,7 @@ def signal_weight_matrix(sig_id: int) -> pd.DataFrame | None:
     try:
         sig = s.get(Signal, sig_id)
         if sig is None or sig.model_type not in ("ic_weight_rolling", "ic_meanvar",
+                                                 "ic_inversevol_rolling",
                                                  "ortho_ic_weight_rolling"):
             return None
     finally:
@@ -1692,6 +1696,7 @@ def signal_panel(sig: Signal, market, start=None, end=None) -> pd.DataFrame:
       ⚠️ ic_weight 用全样本 RankIC 均值定权重 —— 存在轻微样本内偏误（权重看过
       全样本），只作基线；推荐用 ic_weight_rolling / ic_meanvar（walk-forward）。
     ic_weight_rolling：逐日 ICIR 滚动权重（t 日权重只用 t-h 之前的 IC，无前视）。
+    ic_inversevol_rolling：滚动 IC 逆波动率（ICIR 的稳健变体，均值穿零不翻车）。
     ic_meanvar：IC 均值-方差凸组合 w ∝ (Σ+λI)⁻¹μ（同样 walk-forward）。
     linear / tree：walk-forward 拟合（见 model 层），训练窗口严格只用过去数据。
     """
@@ -1724,7 +1729,8 @@ def signal_panel(sig: Signal, market, start=None, end=None) -> pd.DataFrame:
         panel.columns.name = "code"
         return panel.loc[(panel.index >= start) & (panel.index <= end)]
 
-    if sig.model_type in ("ic_weight_rolling", "ic_meanvar", "ortho_ic_weight_rolling"):
+    if sig.model_type in ("ic_weight_rolling", "ic_meanvar", "ic_inversevol_rolling",
+                          "ortho_ic_weight_rolling"):
         return _rolling_weighted_panel(sig, market, start, end)
 
     if sig.model_type in ("linear", "tree"):

@@ -99,6 +99,23 @@ def rolling_icir_weights(panels: dict[str, pd.DataFrame], close_adj: pd.DataFram
     return _normalize_rows(w.reindex(close_adj.index))
 
 
+def rolling_inversevol_weights(panels: dict[str, pd.DataFrame], close_adj: pd.DataFrame,
+                               h: int = 5, window: int = 252, min_periods: int = 60,
+                               min_n: int = 10) -> pd.DataFrame:
+    """滚动 IC 逆波动率权重：w_f(t) ∝ 1 / std(IC_f[·< t-h])。
+
+    ICIR（mean/std）在 IC 均值穿零附近会剧烈翻符号、权重抖动大；
+    逆波动率是它的稳健变体：只按"信号稳定度"分配，均值方向交给多因子
+    分散化与前视屏蔽后的样本外表现。前视屏蔽与 ICIR 完全一致（IC 序列 shift(h)）。
+    """
+    ics = pd.concat({k: daily_ic_series(v, close_adj, h, min_n) for k, v in panels.items()},
+                    axis=1).shift(h)  # ← 前视屏蔽
+    sd = ics.rolling(window, min_periods=min_periods).std(ddof=1).combine_first(
+        ics.expanding(min_periods=min_periods).std(ddof=1))
+    w = 1.0 / sd.where(sd > 1e-12, np.nan)
+    return _normalize_rows(w.reindex(close_adj.index))
+
+
 def rolling_ic_meanvar_weights(panels: dict[str, pd.DataFrame], close_adj: pd.DataFrame,
                                h: int = 5, window: int = 252, min_periods: int = 60,
                                ridge: float = 0.5, min_n: int = 10) -> pd.DataFrame:

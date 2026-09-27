@@ -9,7 +9,8 @@ from quantlab.factors.combine import (apply_weights, combination_gain,
                                       daily_ic_series, pooled_corr,
                                       redundancy_prune,
                                       rolling_ic_meanvar_weights,
-                                      rolling_icir_weights)
+                                      rolling_icir_weights,
+                                      rolling_inversevol_weights)
 
 
 def _panels(n=600, k=4, seed=11, ortho=True):
@@ -146,3 +147,52 @@ def test_robustness_aggregation():
     assert rb is not None
     assert 0 <= rb["direction_consistency"] <= 1
     assert rb["n_models"] == len(res["models"])
+
+
+def test_inversevol_weights_no_lookahead_and_stability():
+    """逆波动率权重：同 ICIR 的无前视纪律 + 归一 + 权重恒正。"""
+    # 夹具注意：_panels 的 f0 是"完美 alpha"（IC 方差≈0 → 权重 NaN 退化），
+    # 这里用两支 IC 方差均为正的因子
+    rng = np.random.default_rng(3)
+    n_ = 500
+    idx = pd.bdate_range("2023-01-02", periods=n_)
+    cols = [f"S{i}" for i in range(6)]
+    close = pd.DataFrame(100 * np.cumprod(1 + rng.normal(0, 0.01, (n_, 6)), axis=0),
+                         index=idx, columns=cols)
+    y = close.shift(-5) / close - 1
+    panels = {"f0": y + rng.normal(0, 0.002, (n_, 6)),
+              "f1": pd.DataFrame(rng.normal(0, 1, (n_, 6)), index=idx, columns=cols)}
+    panels["f0"].iloc[:5] = panels["f0"].iloc[5]
+    w_all = rolling_inversevol_weights(panels, close, h=5, window=120, min_periods=60,
+                                       min_n=3)
+    w = w_all.dropna(how="all")
+    assert len(w) > 300
+    assert ((w.sum(axis=1) - 1.0).abs() < 1e-9).all()   # 每行归一
+    assert (w > 0).all().all()                           # 逆波动率权重恒正
+    # 无前视：截断点之前 30 行逐位一致
+    cut = close.index[400]
+    w_trunc = rolling_inversevol_weights({k: v.loc[:cut] for k, v in panels.items()},
+                                         close.loc[:cut], h=5, window=120, min_periods=60,
+                                         min_n=3)
+    common = w_trunc.index[60:370]
+    pd.testing.assert_frame_equal(
+        w_all.loc[common].fillna(0), w_trunc.loc[common].fillna(0))
+
+
+def test_inversevol_concentrates_on_stable_factor():
+    """IC 稳定（低方差）的因子应拿到更大权重（与 IC 均值方向无关）。"""
+    rng = np.random.default_rng(11)
+    n = 400
+    idx = pd.bdate_range("2023-01-02", periods=n)
+    cols = [f"S{i}" for i in range(6)]
+    close = pd.DataFrame(100 * np.cumprod(1 + rng.normal(0, 0.01, (n, 6)), axis=0),
+                         index=idx, columns=cols)
+    # s：贴着未来收益（IC 稳定在高值、方差小）；n：纯噪声（IC 方差大、均值近 0）
+    y = close.shift(-5) / close - 1
+    stable = y + rng.normal(0, 0.0005, (n, 6))
+    stable.iloc[:5] = stable.iloc[5]
+    noisy = pd.DataFrame(rng.normal(0, 1, (n, 6)), index=idx, columns=cols)
+    w = rolling_inversevol_weights({"s": stable, "n": noisy}, close,
+                                   h=5, window=120, min_periods=60, min_n=3).dropna()
+    assert len(w) > 200
+    assert (w["s"] > w["n"]).mean() > 0.9

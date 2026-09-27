@@ -393,3 +393,26 @@ Sharpe 与主指标同 rf；基准收益为区间简单收益；不足整年按�
 **根治**：把 decay / value 两图的 `echarts.init` 提前到同步脚本段
 （与 IC 时序图同时刻 —— 同步 init 从未踩空），异步回调只做 setOption。
 另外：canvas.width 探针不可靠（正常渲染的图也报 0），**截图才是唯一真值**。
+
+## 30. 第六个组合模型：滚动 IC 逆波动率（夜间批次十七）
+
+`ic_inversevol_rolling`：w_f(t) ∝ 1/std(IC_f[·<t−h])，与 ICIR 同样的 shift(h)
+前视屏蔽。动机：ICIR = mean/std 在 IC 均值穿零附近**权重剧烈翻符号**，
+逆波动率只按"信号稳定度"分配、不押注均值估计 —— 是 ICIR 的稳健变体。
+
+实测（因子 1,2,3 · h=5 · 2023-06~2025-06）：
+
+| 模型 | RankIC | NW t |
+|---|---|---|
+| equal_weight | +0.0476 | 2.81 |
+| **ic_inversevol_rolling** | **+0.0462** | **2.87（全场最高）** |
+| ic_weight_rolling | +0.0224 | 1.23 |
+| ic_meanvar | +0.0160 | 0.89 |
+| ortho_ic_weight_rolling | +0.0205 | 1.14 |
+
+发现：在本因子集上**稳健变体跑赢了 ICIR 与均值方差**（NW t 全场最高）——
+当分量 IC 均值估计噪声大时，"不押均值"反而是更好的选择。已加入默认对照集
+（对照实验/compare 脚本自动包含），signals/new 下拉可选；测试 78 → 80。
+（工程插曲：新模型接了 4 处注册点仍漏了 signal_panel 的 dispatch 元组 ——
+被既有测试 test_robustness_aggregation 立刻抓住，这正是对照实验页
+"新模型必须过同一口径"的价值。）

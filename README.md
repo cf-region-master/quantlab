@@ -110,6 +110,7 @@ flowchart LR
 | `equal_weight` | 等权 | 无信息使用 | 基线 |
 | `ic_weight` | 全样本 RankIC 均值 | ⚠️ 轻微样本内偏误（权重看过全样本），仅作基线 | 快速参考 |
 | `ic_weight_rolling` | 滚动 ICIR：w(t) ∝ mean(IC[·<t−h]) / std(IC[·<t−h])，IC 序列 shift(h) 屏蔽前视 | ✅ | **推荐** |
+| `ic_inversevol_rolling` | 滚动 IC 逆波动率：w ∝ 1/std(IC[·<t−h])（ICIR 的稳健变体，均值穿零不翻符号） | ✅ | 推荐：IC 估计噪声大时更稳 |
 | `ic_meanvar` | IC 均值-方差凸组合 w ∝ (Σ+λI)⁻¹μ（滚动，同样 shift(h)） | ✅ | **推荐**：分散化收益进权重 |
 | `ortho_ic_weight_rolling` | 分量顺序 Schmidt 正交化 → 残差滚动 ICIR | ✅ | 因子高度相关时消除重复计价 |
 | `linear` / `tree` / `gbdt` | walk-forward 截面回归（训练窗截止 r−h−purge） | ✅ 全部样本外预测 | 非线性交互 |

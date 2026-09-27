@@ -20,7 +20,7 @@ from ..factors.diagnostics import run_diagnostics
 from ..factors.diagnostics import newey_west_tstat
 
 DEFAULT_MODELS = ("equal_weight", "ic_weight", "ic_weight_rolling",
-                  "ic_meanvar", "ortho_ic_weight_rolling")
+                  "ic_inversevol_rolling", "ic_meanvar", "ortho_ic_weight_rolling")
 
 
 def compare_combinations(factor_ids: list[int], start: str, end: str,
