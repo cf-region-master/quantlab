@@ -80,12 +80,18 @@ def _charts(data: dict[str, Any]) -> list[Path]:
     for ax, (key, fdata) in zip(axes, data["factors"].items()):
         for h, d in fdata["diagnostics"].items():
             s = d["ic_series"]
-            ax.plot(s["index"][::5], s["rank_ic"][::5], lw=0.8, label=f"RankIC(h={h})")
+            n = len(s["index"])
+            # x 用数值位置（类别字符串坐标会把 1/5 采样的点挤在轴前 1/5）
+            xv = np.arange(0, n, 5)
+            yv = [v if v is not None and np.isfinite(v) else np.nan
+                  for v in s["rank_ic"][::5]]
+            ax.plot(xv, yv, lw=0.8, label=f"RankIC(h={h})")
         ax.axhline(0, color="gray", lw=0.6)
         ax.set_title(f"{fdata['card']['name']}（{key}）逐日 RankIC", fontsize=9)
         ax.legend(fontsize=7); ax.grid(alpha=0.3)
-        step = max(1, len(fdata["diagnostics"][list(fdata['diagnostics'])[0]]["ic_series"]["index"]) // 6)
-        ax.set_xticks(range(0, len(s["index"]), step))
+        n0 = len(fdata["diagnostics"][list(fdata["diagnostics"])[0]]["ic_series"]["index"])
+        step = max(1, n0 // 6)
+        ax.set_xticks(np.arange(0, n0, step))
         ax.set_xticklabels(s["index"][::step], rotation=20, fontsize=6)
     fig.tight_layout()
     p = REPORT_ASSETS / "rankic.png"; fig.savefig(p); files.append(p); plt.close(fig)
@@ -298,13 +304,28 @@ def build_markdown(data: dict[str, Any], charts: list[Path]) -> str:
                      f"| {_pct(r['annualized_vol'])} | {_num(r['sharpe'],2)} | {_pct(r['max_drawdown'])} "
                      f"| {r['turnover_sum']:.1f} | {r['total_cost']:.4f} | {r['n_trades']} |")
         L.append("")
-    L.append("**解释**")
+    L.append("**解释**（由本 run 实验数据自动生成，数字与上表同源）")
     L.append("")
-    L.append("- **E1（周度→月度）**：换手合计从 112.7 降至 54.9（约一半），累计成本同比例下降；")
-    L.append("  两变体年化收益接近（25.9% vs 24.6%），但月度版回撤更深（37.1% vs 27.1%）——持仓期变长后")
-    L.append("  单期暴露更集中，2024-09 行情跳变承受了更大的区间波动。差异主要来自**持仓行为（持有期）**而非信号本身。")
-    L.append("- **E2（因子对照）**：mom20 显著占优（年化 25.9% / Sharpe 0.91）；rev5 信号换手最高（247），")
-    L.append("  成本侵蚀后仅剩 6.0%；lowvol20 收益温和但回撤最小（17.8%）——三者风险收益形态与因子卡假设一致。")
+    exps = data["experiments"]
+    e1 = next((e for k, e in exps.items() if k.startswith("E1")), None)
+    e2 = next((e for k, e in exps.items() if k.startswith("E2")), None)
+    if e1 and len(e1.get("comparison") or []) >= 2:
+        a, b = e1["comparison"][0], e1["comparison"][1]
+        L.append(f"- **E1（{a['variant']} → {b['variant']}）**：换手合计 {a['turnover_sum']:.1f} → "
+                 f"{b['turnover_sum']:.1f}，累计成本 {a['total_cost']:.0f} → {b['total_cost']:.0f}（名义元）；"
+                 f"年化 {_pct(a['annualized_return'])} → {_pct(b['annualized_return'])}，"
+                 f"MDD {_pct(a['max_drawdown'])} → {_pct(b['max_drawdown'])}。"
+                 "降频的主要收益是成本节省；单期持仓变长后暴露更集中，回撤变化如实上表——"
+                 "差异来自**持仓行为（持有期）**而非信号本身。")
+    if e2 and (e2.get("comparison") or []):
+        rows = sorted(e2["comparison"], key=lambda r: -(r["annualized_return"] or 0))
+        best = rows[0]
+        hi_to = max(e2["comparison"], key=lambda r: r["turnover_sum"])
+        lo_dd = min(e2["comparison"], key=lambda r: r["max_drawdown"])
+        L.append(f"- **E2（因子对照）**：年化最高 {best['variant']}（{_pct(best['annualized_return'])} / "
+                 f"Sharpe {_num(best['sharpe'],2)}）；换手最高 {hi_to['variant']}"
+                 f"（{hi_to['turnover_sum']:.0f}，成本侵蚀见上表）；回撤最小 {lo_dd['variant']}"
+                 f"（{_pct(lo_dd['max_drawdown'])}）——风险收益形态与因子卡假设对照阅读。")
     L.append("- 毛收益与净收益采用**分别重跑回测**（费率置零）口径：费用会通过可用现金影响后续下单金额，")
     L.append(f"  两条成交序列存在差异（{_gn.get('n_trades_differing_notional', '—')}/{_gn.get('n_trades_net', '—')} 笔金额不同，"
              f"最大差 {_gn.get('max_notional_diff', float('nan')):.2e}）。")
@@ -454,17 +475,26 @@ def build_pdf(md_path: Path, pdf_path: Path) -> Path | None:
     pdf.add_page()
 
     def body(text: str, size: float = 9.5, color=(20, 20, 20), lh: float = 5) -> None:
-        text = text.replace("**", "")
+        # 剥离行内 Markdown 记号；对齐一律左对齐 —— 两端对齐会把混排行里
+        # 少数空格撑到整行宽（中文无空格可断，视觉上出现"巨大空白/孤立符号"）
+        for tok in ("**", "`", "*"):
+            text = text.replace(tok, "")
         pdf.set_font("cjk", "", size)
         pdf.set_text_color(*color)
-        pdf.multi_cell(0, lh, text, new_x="LMARGIN", new_y="NEXT")
+        pdf.multi_cell(0, lh, text, align="L", new_x="LMARGIN", new_y="NEXT")
         pdf.set_text_color(20)
 
     md = md_path.read_text(encoding="utf-8")
     lines = md.splitlines()
     i = 0
+    in_fence = False
     while i < len(lines):
-        line = lines[i].rstrip()
+        raw = lines[i].rstrip()
+        if raw.startswith("```"):          # 围栏本身不渲染，内容按普通文本输出
+            in_fence = not in_fence
+            i += 1
+            continue
+        line = raw
         if line.startswith("|"):
             rows: list[list[str]] = []
             while i < len(lines) and lines[i].startswith("|"):
@@ -486,25 +516,39 @@ def build_pdf(md_path: Path, pdf_path: Path) -> Path | None:
             continue
         if line.startswith("# "):
             pdf.set_font("cjk", "", 17); pdf.set_text_color(20)
-            pdf.multi_cell(0, 9, line[2:], new_x="LMARGIN", new_y="NEXT"); pdf.ln(2)
+            pdf.multi_cell(0, 9, line[2:], align="L", new_x="LMARGIN", new_y="NEXT"); pdf.ln(2)
         elif line.startswith("## "):
             pdf.ln(2); pdf.set_font("cjk", "", 13); pdf.set_text_color(26, 95, 180)
-            pdf.multi_cell(0, 8, line[3:], new_x="LMARGIN", new_y="NEXT"); pdf.set_text_color(20)
+            pdf.multi_cell(0, 8, line[3:], align="L", new_x="LMARGIN", new_y="NEXT"); pdf.set_text_color(20)
         elif line.startswith("### "):
             pdf.ln(1); pdf.set_font("cjk", "", 11)
-            pdf.multi_cell(0, 7, line[4:], new_x="LMARGIN", new_y="NEXT")
+            pdf.multi_cell(0, 7, line[4:], align="L", new_x="LMARGIN", new_y="NEXT")
         elif line.startswith("!["):
-            alt = line[2:line.index("](")]
-            img = REPORT_ASSETS / f"{alt}.png"
+            # 路径取自 () 内的实际文件名（历史上错用 alt 文本当文件名，图从未嵌入）
+            path = line[line.index("](") + 2:line.rindex(")")]
+            img = REPORT_ASSETS / Path(path).name
             if img.exists():
                 pdf.image(str(img), w=175)
                 pdf.ln(2)
-        elif line.startswith("- "):
-            body("• " + line[2:])
-        elif line.startswith("> "):
-            body(line[2:], size=9, color=(110, 110, 110))
-        elif line.strip():
-            body(line)
+            else:
+                body(f"（插图缺失：{Path(path).name}）", size=8, color=(180, 60, 60))
+        elif line.strip() == "---":
+            pdf.set_draw_color(180)
+            y = pdf.get_y() + 2
+            pdf.line(pdf.l_margin, y, pdf.w - pdf.r_margin, y)
+            pdf.set_y(y + 3)
+        else:
+            t = line.strip()
+            if not t:
+                pass
+            elif t.startswith("- "):
+                # 紧排：• 后若加空格，fpdf2 会把后面的长 CJK 串当"超宽单词"整词换行，
+                # 页面上留下孤立的 •（视觉验收实锤过）
+                body("•" + t[2:])
+            elif t.startswith("> "):
+                body(t[2:], size=9, color=(110, 110, 110))
+            else:
+                body(t)
         i += 1
     pdf.output(str(pdf_path))
     return pdf_path
